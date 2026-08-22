@@ -105,8 +105,119 @@ function measure(image, region) {
   };
 }
 
+// `--diff a.png b.png` reports what changed between two frames of the same
+// pose. Differencing a frame against the same frame with the key light off is
+// the only way to answer "is the sun casting a shadow here" from screenshots: a
+// real cast shadow is a hard boundary in the difference image, which shows up
+// as two populations; a frame with no shadows differs smoothly and nothing else.
+if (process.argv[2] === '--diff') {
+  const a = decodePng(readFileSync(process.argv[3]));
+  const b = decodePng(readFileSync(process.argv[4]));
+  if (a.width !== b.width || a.height !== b.height) throw new Error('frames differ in size');
+  const delta = { width: a.width, height: a.height, channels: 3, data: Buffer.alloc(a.width * a.height * 3) };
+  let sum = 0; let max = 0; let changed = 0;
+  for (let i = 0, j = 0; i < a.width * a.height; i += 1) {
+    const ia = i * a.channels; const ib = i * b.channels;
+    const d = Math.abs(luma(a.data[ia], a.data[ia + 1], a.data[ia + 2])
+      - luma(b.data[ib], b.data[ib + 1], b.data[ib + 2]));
+    delta.data[j] = delta.data[j + 1] = delta.data[j + 2] = Math.min(255, Math.round(d));
+    j += 3; sum += d; if (d > max) max = d; if (d > 4) changed += 1;
+  }
+  // Write the difference image when asked: seeing WHERE the key landed is
+  // usually the answer, and a number cannot show a shadow's shape.
+  const outIndex = process.argv.indexOf('--out');
+  if (outIndex > 0 && process.argv[outIndex + 1]) {
+    const { deflateSync } = await import('node:zlib');
+    const w = delta.width; const h = delta.height;
+    const raw = Buffer.alloc(h * (w * 3 + 1));
+    for (let y = 0; y < h; y += 1) {
+      raw[y * (w * 3 + 1)] = 0;
+      delta.data.copy(raw, y * (w * 3 + 1) + 1, y * w * 3, (y + 1) * w * 3);
+    }
+    const chunk = (type, body) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(body.length, 0);
+      head.write(type, 4, 'ascii');
+      const crcBuf = Buffer.concat([Buffer.from(type, 'ascii'), body]);
+      let crc = ~0;
+      for (let i = 0; i < crcBuf.length; i += 1) {
+        crc ^= crcBuf[i];
+        for (let b = 0; b < 8; b += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+      }
+      const tail = Buffer.alloc(4); tail.writeUInt32BE((~crc) >>> 0, 0);
+      return Buffer.concat([head, body, tail]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(process.argv[outIndex + 1], Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+    ]));
+  }
+  const regions = process.argv.slice(5).filter((a) => a.includes(',')).map((spec) => spec.split(',').map(Number));
+  console.log(JSON.stringify({
+    a: process.argv[3], b: process.argv[4],
+    meanDelta: +(sum / (a.width * a.height)).toFixed(2),
+    maxDelta: +max.toFixed(1),
+    changedShare: +(changed / (a.width * a.height)).toFixed(4),
+    whole: measure(delta),
+    regions: regions.map((r) => measure(delta, r)),
+  }, null, 2));
+  process.exit(0);
+}
+
+// `--ratio keyon.png keyoff.png` answers the question the rubric actually asks:
+// what is the DELIVERED lit-to-shadowed ratio in the frame?
+//
+// Two earlier attempts got this wrong in opposite directions. Comparing a lit
+// region to a hand-picked "shadowed" one measures whatever the picker chose -
+// often a penumbra. Comparing key-on to key-off at the SAME pixel measures
+// 1 + key/fill, which is how much of that pixel's light is sun, not lit versus
+// shadowed. Neither is the ratio a reviewer sees.
+//
+// The difference image classifies every pixel instead: a pixel the sun reaches
+// changes when the key is switched off, and a pixel in shadow does not. So
+// classify by delta, then measure both classes in the key-on frame. No region
+// picking, no penumbra: pixels in the transition band are excluded by the
+// deadband and reported separately.
+if (process.argv[2] === '--ratio') {
+  const on = decodePng(readFileSync(process.argv[3]));
+  const off = decodePng(readFileSync(process.argv[4]));
+  if (on.width !== off.width || on.height !== off.height) throw new Error('frames differ in size');
+  const regionArgs = process.argv.slice(5).filter((a) => a.includes(','));
+  const box = regionArgs.length ? regionArgs[0].split(',').map(Number) : [0, 0, on.width, on.height];
+  const LIT_DELTA = 24;      // clearly reached by the key
+  const SHADOW_DELTA = 4;    // clearly not reached
+  let litSum = 0; let litN = 0; let shadowSum = 0; let shadowN = 0; let penumbraN = 0;
+  for (let y = Math.max(0, box[1]); y < Math.min(on.height, box[3]); y += 1) {
+    for (let x = Math.max(0, box[0]); x < Math.min(on.width, box[2]); x += 1) {
+      const i = (y * on.width + x) * on.channels;
+      const j = (y * off.width + x) * off.channels;
+      const lOn = luma(on.data[i], on.data[i + 1], on.data[i + 2]);
+      const lOff = luma(off.data[j], off.data[j + 1], off.data[j + 2]);
+      const delta = lOn - lOff;
+      if (delta >= LIT_DELTA) { litSum += lOn; litN += 1; }
+      else if (delta <= SHADOW_DELTA) { shadowSum += lOn; shadowN += 1; }
+      else penumbraN += 1;
+    }
+  }
+  const lit = litN ? litSum / litN : 0;
+  const shadow = shadowN ? shadowSum / shadowN : 0;
+  console.log(JSON.stringify({
+    keyOn: process.argv[3], keyOff: process.argv[4], region: box,
+    litPixels: litN, shadowPixels: shadowN, penumbraPixels: penumbraN,
+    litMeanLuma: +lit.toFixed(1),
+    shadowMeanLuma: +shadow.toFixed(1),
+    deliveredLitShadowRatio: shadow > 0 ? +(lit / shadow).toFixed(2) : null,
+    note: 'classified by whether the key reaches the pixel; both means measured in the key-on frame',
+  }, null, 2));
+  process.exit(0);
+}
+
 const file = process.argv[2];
-if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [x0,y0,x1,y1 ...]'); process.exit(2); }
+if (!file) { console.error('usage: measure-frame-v1.mjs <file.png> [regions] | --diff a.png b.png [regions] [--out d.png] | --ratio keyon.png keyoff.png [region]'); process.exit(2); }
 const image = decodePng(readFileSync(file));
 const regions = process.argv.slice(3).map((spec) => spec.split(',').map(Number));
 const report = {

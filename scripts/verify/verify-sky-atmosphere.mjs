@@ -38,6 +38,7 @@ import {
 
 import {
   ATMOSPHERE_MODEL_VERSION,
+  DELIVERED_REFERENCE_CLASS,
   EXPOSURE_CURVE,
   KEY_FILL_GAIN_RANGE,
   MIN_ENVIRONMENT_SHARE,
@@ -48,6 +49,7 @@ import {
   canyonBounce,
   displayValue,
   displayStepScene,
+  envMapIntensityFor,
   sceneForDisplay,
   blackBodyColor,
   cloudProfile,
@@ -69,6 +71,11 @@ import skyAtmosphere, {
   SKY_ATMOSPHERE_BUDGET,
   SKY_ATMOSPHERE_VERSION,
 } from '../../src/render/passes/sky-atmosphere.js';
+import {
+  contactShadowLeakMetres,
+  keyShareOfRatio,
+  projectedContactShadow,
+} from '../../src/render/shadow-casters.js';
 import { PASSES } from '../../src/render/passes/index.js';
 import { createPassRuntime, validatePass } from '../../src/render/pass-registry.js';
 
@@ -94,7 +101,10 @@ let puddleRow = null;
 // Must match DITHER_STEPS in the pass; asserted below against the built pass.
 const SKY_DITHER_STEPS = 2.0;
 let cardRows = [];
+let deliveredRows = [];
 let contactRow = null;
+let contactAoRow = null;
+let groundingRow = null;
 let updateCostRow = null;
 
 async function section(name, body) {
@@ -597,8 +607,13 @@ await section('shadow side stays readable and the black share stays low', () => 
       const sidewalk = surfaceDisplay(CANONICAL_SURFACES[1], balance, model);
       const ratio = sidewalk.lit / Math.max(1e-6, sidewalk.shadow);
       if (model.sun.altitudeDeg > 35 && weather === 'clear') {
-        check(ratio > 1.6 && ratio < 3.2,
-          `clear high-sun lit/shadow ratio band 1.6..3.2 at ${hour}:00, got ${ratio.toFixed(2)}`);
+        // Re-banded from 1.6..3.2 when `TARGET_KEY_FILL.clear` went to the
+        // physical 5.8. The shipped value sat at 1.90..2.06, the bottom of the
+        // old band; it now sits at 2.07..2.18. The band is tight because this
+        // is a *booked* ratio - see the delivered-rig section below for what a
+        // capture measures, and why the two numbers are not the same one.
+        check(ratio > 2.0 && ratio < 2.6,
+          `clear high-sun lit/shadow ratio band 2.0..2.6 at ${hour}:00, got ${ratio.toFixed(2)}`);
       }
       if (model.sun.altitudeDeg > 4) {
         check(ratio > 1.05, `the key must be visible at all at ${hour}:00 ${weather}, ratio ${ratio.toFixed(2)}`);
@@ -652,10 +667,28 @@ await section('shadow side stays readable and the black share stays low', () => 
     'the bounce must be a fifth or more of the golden-hour fill');
   // The contract is that the term is SHAPED by sun altitude, not that it has a
   // particular size: a legitimate view-factor change moves both ends together.
-  const goldenShare = bounceGolden / keyFillBalance(golden).achieved.fill;
-  const noonShare = bounceNoon / keyFillBalance(noon).achieved.fill;
+  //
+  //
+  // Measured at a FIXED key gain, per unit of horizontal key. That is the
+  // physical statement the term makes: a vertical facade at low sun takes
+  // nearly the whole beam while the ground under it takes almost none.
+  // Re-deriving the bounce from each hour's own `gains.key` instead confounds
+  // the altitude shape with the gain - the clear key target is now the physical
+  // 5.8, which raises the noon gain far more than the golden-hour one (golden
+  // was already on the 6.5 clamp), so both ends move for a reason that has
+  // nothing to do with the term being tested.
+  const shapeGain = 2;
+  const shapeGolden = canyonBounce(golden, shapeGain) / sceneIlluminance(golden).key;
+  const shapeNoon = canyonBounce(noon, shapeGain) / sceneIlluminance(noon).key;
+  check(shapeNoon < shapeGolden * 0.25,
+    `per unit of horizontal key the bounce must be far larger at golden hour `
+    + `(${shapeNoon.toFixed(3)} vs ${shapeGolden.toFixed(3)})`);
+  // ...and the share of the fill the module ACTUALLY applies at each end,
+  // which is the number that reaches the shadow side.
+  const goldenShare = keyFillBalance(golden).shadow.bounceShare;
+  const noonShare = keyFillBalance(noon).shadow.bounceShare;
   check(noonShare < goldenShare * 0.65,
-    `the bounce must matter far less at noon than at golden hour (${noonShare.toFixed(3)} vs ${goldenShare.toFixed(3)})`);
+    `the applied bounce must matter far less at noon than at golden hour (${noonShare.toFixed(3)} vs ${goldenShare.toFixed(3)})`);
   check(noonShare < 0.3, `the bounce may not dominate the noon fill, got ${noonShare.toFixed(3)}`);
   check(bounceNight === 0, 'no beam below the horizon means no bounce');
   check(bounceFog < bounceGolden * 0.25, 'an overcast dome has no directional beam to bounce');
@@ -676,6 +709,147 @@ await section('shadow side stays readable and the black share stays low', () => 
       }
     }
   }
+});
+
+// --------------------------------------------- delivered rig vs a real capture
+//
+// The gate above predicts the display value of a surface from `achieved`, which
+// is the solver's own book. For three rounds nobody checked that book against a
+// frame, and it does not agree with one.
+//
+// The evidence is a matched pair: the capture harness now shoots a second frame
+// per card with `sun.intensity = 0`, so the same pixels can be read with the key
+// on and with the key off. Key-off is exactly what a fully shadowed surface
+// receives, because a shadow map zeroes the same term. On `01-street-day`
+// (11:00, clear, sun altitude 43.33 deg, sun.intensity 5.60, hemi 0.218,
+// ambient 0.047, scene.environmentIntensity 0.80):
+//
+//   footway     [380,450,600,530]   key on 191.1/255   key off  68.8/255
+//   carriageway [120,485,260,525]   key on  86.8/255   key off  12.5/255
+//                                                      median 11.5, 55.4% < 12
+//
+// Inverting ACES + sRGB on the footway pair cancels the surface albedo exactly
+// and leaves `1 + key/fill = 6.29`, i.e. a delivered scene-referred key/fill of
+// **5.29**. The pre-wave `achieved.ratio` booked 2.78 for the same state. The
+// two disagree by 1.9x, and the direction matters: the book is *optimistic*
+// about the shadow side, which is why the black-share gate above could read
+// 0/720 while more than half of the shipped card's shadowed carriageway sat
+// under the same 12/255 threshold.
+//
+// `keyFillBalance().delivered` is the module's prediction of that measurement.
+// This section pins it to the card.
+const CARD_11_CLEAR = Object.freeze({
+  hour: 11,
+  weather: 'clear',
+  /** Albedo-free: (radiance_lit / radiance_shadow) - 1 on the same footway pixels. */
+  deliveredKeyFill: 5.286,
+  /** Displayed lit/shadow on that footway, straight off the two frames. */
+  displayedRatio: 191.1 / 68.8,
+  /** `delivered.fill` the module predicted for the state that card was shot in. */
+  deliveredFillAtCapture: 0.849,
+});
+
+await section('the delivered rig is checked against a matched key-off capture', () => {
+  const card = computeSkyModel({ hour: CARD_11_CLEAR.hour, weather: CARD_11_CLEAR.weather });
+  const balance = keyFillBalance(card);
+  const delivered = balance.delivered;
+
+  check(delivered.referenceClass === DELIVERED_REFERENCE_CLASS,
+    'the delivered block must name the class it is quoted for');
+  check(finite([delivered.key, delivered.environment, delivered.punctual, delivered.fill, delivered.ratio]),
+    'every delivered term must be finite');
+  check(Math.abs(delivered.environment
+    - card.skyIrradianceLuminance * envMapIntensityFor(DELIVERED_REFERENCE_CLASS, card)) < 1e-3,
+  'the delivered environment term must be the per-class grade, not the global intensity');
+
+  // 1. The book is optimistic, and by roughly the measured factor. The module
+  //    models neither the renderer's light colours nor the prefilter loss, so
+  //    it is allowed to land under the card - but not over it, and not by more
+  //    than the size of the terms it omits.
+  const modelled = delivered.ratio;
+  // What this same block predicted for the rig the card was shot with
+  // (TARGET_KEY_FILL.clear = 4.0, SHADOW_DISPLAY_FLOOR = 0.62): key 3.412
+  // against fill 0.849. The card measured 5.286 for that state, so the model's
+  // residual error there was 1.32x. Carrying that residual forward assumes it
+  // is multiplicative and hour-independent, which is an assumption one card
+  // cannot test - it is stated here so the next capture can refute it.
+  const MODELLED_AT_CAPTURE = 4.019;
+  const measuredNow = CARD_11_CLEAR.deliveredKeyFill * (modelled / MODELLED_AT_CAPTURE);
+  check(modelled > balance.achieved.ratio * 1.2,
+    `the delivered ratio must exceed the booked one - the renderer applies no `
+    + `atmospheric extinction to its key (${modelled} vs ${balance.achieved.ratio})`);
+  check(modelled >= MODELLED_AT_CAPTURE * 1.25,
+    `this wave must raise the delivered key/fill at clear high sun, got ${modelled} `
+    + `against ${MODELLED_AT_CAPTURE} for the captured rig`);
+  check(modelled > 5.0 && modelled < 7.0,
+    `delivered clear high-sun key/fill band 5.0..7.0, got ${modelled}`);
+
+  // 2. The shadow side may not be cut to pay for it. This is the constraint the
+  //    card makes non-negotiable: its shadowed carriageway is already at the
+  //    black threshold, so any reduction here is a measured crush.
+  const MODELLED_FILL_AT_CAPTURE = CARD_11_CLEAR.deliveredFillAtCapture;
+  check(delivered.fill >= MODELLED_FILL_AT_CAPTURE - 1e-6,
+    `the delivered shadow side may not fall below the shipped card's own level `
+    + `(${delivered.fill} vs ${MODELLED_FILL_AT_CAPTURE})`);
+
+  // 3. The displayed consequence, which is what the review actually scores.
+  //    Same ACES + sRGB transform, applied to the card's own measured shadow
+  //    level scaled by the change in the delivered ratio, so the prediction
+  //    inherits the card's albedo instead of assuming one.
+  const shadowScene = sceneForDisplay(68.8 / 255, balance.apply.exposure)
+    * (delivered.fill / MODELLED_FILL_AT_CAPTURE);
+  const litScene = shadowScene * (1 + measuredNow);
+  const predictedShadow = 255 * displayValue(shadowScene, balance.apply.exposure);
+  const predictedLit = 255 * displayValue(litScene, balance.apply.exposure);
+  const predictedRatio = predictedLit / predictedShadow;
+  check(predictedRatio > CARD_11_CLEAR.displayedRatio,
+    `the predicted displayed ratio must beat the card it is measured against `
+    + `(${predictedRatio.toFixed(2)} vs ${CARD_11_CLEAR.displayedRatio.toFixed(2)})`);
+  check(predictedRatio > 2.9 && predictedRatio < 3.4,
+    `predicted displayed lit/shadow band 2.9..3.4 on the captured footway, got ${predictedRatio.toFixed(2)}`);
+  check(predictedLit < 232,
+    `the lit footway must keep headroom for sunlit white paint, got ${predictedLit.toFixed(0)}/255`);
+  check(predictedShadow >= 68.0,
+    `the shadow side of that footway may not go down, got ${predictedShadow.toFixed(1)}/255`);
+
+  // 4. The carriageway is the surface that was measured crushing. Its shadow
+  //    side is carried by `envMapIntensityFor('asphalt')`, because the renderer
+  //    gives a classed material its own envMap and that intensity. At the dry
+  //    road roughness this project ships (0.93) that response is diffuse
+  //    irradiance, not a reflection, so trimming it below the physical value
+  //    for a rough dielectric is indistinguishable from crushing the shadow.
+  const noonClear = computeSkyModel({ hour: 12, weather: 'clear' });
+  check(envMapIntensityFor('asphalt', noonClear) >= 0.9,
+    `the carriageway's dry environment grade may not sit below 0.9 - its shadow side `
+    + `was measured at a median 11.5/255, got ${envMapIntensityFor('asphalt', noonClear)}`);
+
+  // 5. Shape over the clock: the delivered ratio has to behave like a sun, not
+  //    like a constant, and it must be zero below the horizon.
+  for (const weather of WEATHER_KINDS) {
+    for (let hour = 0; hour < 24; hour += 0.5) {
+      const model = computeSkyModel({ hour, weather });
+      const d = keyFillBalance(model).delivered;
+      check(finite([d.key, d.fill, d.ratio]) && d.fill > 0,
+        `delivered terms finite and positive at ${hour}:00 ${weather}`);
+      if (model.sun.altitudeDeg <= 0) {
+        check(d.key === 0, `no delivered key below the horizon at ${hour}:00 ${weather}`);
+      }
+      if (weather !== 'clear') {
+        check(d.ratio < 5.0,
+          `an overcast dome may not deliver a clear-sky key/fill at ${hour}:00 ${weather}, got ${d.ratio}`);
+      }
+    }
+  }
+  const dNoon = keyFillBalance(computeSkyModel({ hour: 12, weather: 'clear' })).delivered;
+  const dGolden = keyFillBalance(computeSkyModel({ hour: 18.5, weather: 'clear' })).delivered;
+  check(dNoon.ratio > dGolden.ratio,
+    `the delivered ratio must fall with the sun (${dNoon.ratio} -> ${dGolden.ratio})`);
+
+  deliveredRows = [
+    { label: 'card 11:00 clear', ...delivered, predictedShadow, predictedLit, predictedRatio },
+    { label: 'noon 12:00 clear', ...dNoon },
+    { label: 'golden 18:30 clear', ...dGolden },
+  ];
 });
 
 // ------------------------------------------------------------- sky luminance
@@ -1355,12 +1529,44 @@ await section('ground decals sit on the pavement, not under it', () => {
     for (let i = 0; i < position.count; i += 1) min = Math.min(min, position.getY(i));
     return min;
   };
-  // Everything that lies on the footway.
+  // Everything that lies on the paved surface.
+  //
+  // CONTRACT CHANGE, round 5. The old assertion was `y >= footwayLift` for
+  // every vertex of every pool, i.e. "a light pool lies on the footway". That
+  // was true of a single flat quad and is wrong of the thing a pool actually
+  // is: an 11.5 m radius patch that starts on the footway, crosses the kerb
+  // and lands on a crowned carriageway 0.12 m lower, over ground that is not
+  // level. Holding a 23 m quad at the footway datum is exactly what put it
+  // under the pavement on the sloping half - the round-4 night card has no
+  // lamp pool on the ground anywhere, at any of the 240 fixtures the pass
+  // reports building.
+  //
+  // The new floor is the gutter invert (`roadLift - gutterDepth`), which is
+  // the lowest point of the paved cross-section, plus the pass's clearance;
+  // the new ceiling is the footway plus that clearance plus a margin. So the
+  // patch is still required to be ON the pavement, over its whole area - just
+  // over the real pavement rather than over one datum of it.
+  const poolLift = 0.12;
+  const gutterInvertLift = roadLift - city.meta.streetDesign.gutterDepth;
   for (const name of ['sky-atmosphere:light-pools', 'sky-atmosphere:shop-spill']) {
-    const y = minY(name);
-    check(y != null, `${name} must exist at night`);
-    check(y >= footwayLift, `${name} must sit on the footway (>= ${footwayLift}), got ${y}`);
-    check(y < footwayLift + 0.4, `${name} must not float above the footway, got ${y}`);
+    const mesh = ctx.root.getObjectByName(name);
+    check(mesh != null, `${name} must exist at night`);
+    const position = mesh.geometry.getAttribute('position');
+    let low = Infinity;
+    let high = -Infinity;
+    for (let i = 0; i < position.count; i += 1) {
+      low = Math.min(low, position.getY(i));
+      high = Math.max(high, position.getY(i));
+    }
+    check(low >= gutterInvertLift + poolLift - 1e-3,
+      `${name} must sit on the paved cross-section (>= ${gutterInvertLift + poolLift}), got ${low}`);
+    check(high < footwayLift + poolLift + 0.3,
+      `${name} must not float above the footway, got ${high}`);
+    // The patch is a grid, not a quad: it has to have more than four corners
+    // or it cannot follow anything.
+    check(position.count > 4 * detail.lights.lampPools,
+      `${name} must be terrain-conforming, got ${position.count} vertices for `
+      + `${detail.lights.lampPools} fixtures`);
   }
   // ...and everything that lies on the carriageway.
   const puddleY = minY('sky-atmosphere:wet-sheen');
@@ -1392,6 +1598,217 @@ await section('ground decals sit on the pavement, not under it', () => {
     shopSpills: detail.lights.shopSpills,
     vehicles: detail.contact.vehicles,
     canopies: detail.contact.canopies,
+  };
+  runtime.dispose();
+});
+
+await section('contact darkening is ambient occlusion, and it tracks the sky', () => {
+  // The round-3 review's first finding, restated as a test.
+  //
+  // `01-street-day` (11:00) and `06-night-street` (21:30) were shot from an
+  // identical eye and target. On row 760 the frame stepped at exactly x=1330
+  // in BOTH: 191.5 -> 152.0 by day and 73.1 -> 43.2 at night. The round-4
+  // key-off pair says why. Inverting the display transform at that pixel, the
+  // key contributes 0.572 radiance left of the boundary and 0.291 right of it,
+  // while the fill contributes 0.075 and 0.035 - both scaled by 0.50, which is
+  // an alpha-0.5 black quad composited in linear space, i.e. CONTACT_ALPHA.
+  // The 3.6 m skirt, mitred to 9.4 m at a sharp corner, was a fake shadow that
+  // did not move with the sun and did not switch off with it.
+  //
+  // Two properties are required of what replaced it: small enough to read as
+  // ambient occlusion, and scaled by the light it occludes.
+  const leak = contactShadowLeakMetres({ texelWorldSize: 0.192055, sunAltitudeDeg: 46.36 });
+  const day = createPassRuntime([skyAtmosphere]);
+  const dayCtx = makeContext(makeCity(), { hour: 12, weather: 'clear' });
+  const dayDetail = day.build(dayCtx).built[0].detail;
+
+  check(dayDetail.contact.width <= leak.leakMetres + 1e-9,
+    `the contact band is ${dayDetail.contact.width} m, at or under the ${leak.leakMetres} m of `
+    + 'contact the shadow map\'s own bias plan erases - it fills in exactly that and no more');
+  check(dayDetail.contact.width <= 0.35,
+    `${dayDetail.contact.width} m reads as a crevice line, not as a shadow (round 3 shipped 3.6 m)`);
+  check(dayDetail.contact.mitreClamp * dayDetail.contact.width <= 0.5,
+    `the widest a corner mitre can open is ${(dayDetail.contact.mitreClamp * dayDetail.contact.width).toFixed(3)} m; `
+    + 'round 3 could throw a 9.4 m wedge across a footway from one needle corner');
+  check(dayDetail.contact.aoScale > 0.5,
+    `at noon there is sky to occlude, so the AO runs at ${dayDetail.contact.aoScale.toFixed(3)}`);
+
+  // Physics check on the width choice: a wall's own AO does NOT fall off over
+  // a footway, so a wide band cannot be justified as wall occlusion. For an
+  // infinite wall of height h the cosine-weighted sky occlusion at distance d
+  // is (1/2) h^2 / (h^2 + d^2).
+  const occlusionAt = (d, h) => 0.5 * ((h * h) / (h * h + d * d));
+  check(occlusionAt(3.6, 20) > 0.48,
+    `at 3.6 m from a 20 m wall the sky occlusion is still ${occlusionAt(3.6, 20).toFixed(3)} of `
+    + '0.500 at the wall: wall AO is a broad canyon term, which the light rig already delivers, '
+    + 'so painting a 3.6 m band on top of it was double-counting');
+
+  const night = createPassRuntime([skyAtmosphere]);
+  const nightCtx = makeContext(makeCity(), { hour: 21.5, weather: 'clear' });
+  const nightDetail = night.build(nightCtx).built[0].detail;
+  check(nightDetail.contact.aoScale < 0.05,
+    `at 21:30 the sky delivers 0.029 against a noon 1.076, so the AO runs at `
+    + `${nightDetail.contact.aoScale.toFixed(4)} - a hairline, not a wedge`);
+  const nightContact = nightCtx.root.getObjectByName('sky-atmosphere:contact-grounding');
+  const nightCanopy = nightCtx.root.getObjectByName('sky-atmosphere:under-object-shading');
+  check(nightContact.material.opacity < 0.05 && nightCanopy.material.opacity < 0.05,
+    `both AO meshes are at ${nightContact.material.opacity.toFixed(4)} and `
+    + `${nightCanopy.material.opacity.toFixed(4)} opacity at 21:30: ambient occlusion removes SKY, `
+    + 'and at 21:30 there is almost none to remove');
+  const dayContact = dayCtx.root.getObjectByName('sky-atmosphere:contact-grounding');
+  check(dayContact.material.opacity > nightContact.material.opacity * 10,
+    'the day and night strengths differ by more than an order of magnitude, so the boundary '
+    + 'cannot sit at the identical pixel with the identical value in both frames again');
+  contactAoRow = {
+    leak: leak.leakMetres,
+    width: dayDetail.contact.width,
+    dayScale: dayDetail.contact.aoScale,
+    nightScale: nightDetail.contact.aoScale,
+  };
+  day.dispose();
+  night.dispose();
+});
+
+await section('grounding: the objects the shadow map refused still touch the ground', () => {
+  // The round-3 review's second finding. On the near footway of round 4's
+  // `01-street-day`, `measure-frame-v1 --ratio` classifies 217758 pixels as
+  // reached by the key and 3 as shadowed: the tree, the lamp column, the
+  // hydrant, the parked car and every pedestrian put nothing on the ground.
+  // The caster policy is right to refuse them - 165 of 340 meshes are thinner
+  // than the PCF kernel - so the shadow they cannot have is drawn directly.
+  const runtime = createPassRuntime([skyAtmosphere]);
+  const ctx = makeContext(makeCity(), { hour: 11, weather: 'clear' });
+  // Props of exactly the kind the policy excludes: a 12 cm lamp column, a
+  // batch of hydrants, a pedestrian - and one tower that DOES cast.
+  const material = new MeshBasicMaterial();
+  const props = new Group();
+  props.name = 'sidewalk-props';
+  const column = new Mesh(new BoxGeometry(0.12, 4.2, 0.12), material);
+  column.name = 'lamp-column';
+  column.castShadow = false;
+  column.position.set(60, 2.1, 25);
+  props.add(column);
+  const walker = new Mesh(new BoxGeometry(0.5, 1.8, 0.35), material);
+  walker.name = 'pedestrian-7';
+  walker.castShadow = false;
+  walker.position.set(70, 0.9, 26);
+  props.add(walker);
+  const hydrants = new InstancedMesh(new BoxGeometry(0.44, 0.75, 0.44), material, 24);
+  hydrants.name = 'hydrants';
+  hydrants.castShadow = false;
+  const matrix = new Matrix4();
+  for (let i = 0; i < 24; i += 1) {
+    matrix.makeTranslation(i * 14 + 4, 0.375, 30);
+    hydrants.setMatrixAt(i, matrix);
+  }
+  hydrants.instanceMatrix.needsUpdate = true;
+  props.add(hydrants);
+  const tower = new Mesh(new BoxGeometry(20, 40, 20), material);
+  tower.name = 'building-tower';
+  tower.castShadow = true;
+  tower.position.set(300, 20, 300);
+  props.add(tower);
+  ctx.root.add(props);
+
+  runtime.build(ctx);
+  const mesh = ctx.root.getObjectByName('sky-atmosphere:grounding');
+  check(mesh != null, 'the grounding mesh exists');
+  // Nothing at build: this pass is order 10 and the passes that own trees,
+  // vehicles and people are 40-60. The scan is deferred on purpose.
+  const inspect = skyAtmosphere._inspect();
+  check(inspect.grounding.anchors.length === 0,
+    'no anchors at build time, because the objects that need grounding are built by later passes');
+  for (let frame = 0; frame < 4; frame += 1) runtime.update(ctx, 1 / 60);
+  const grounding = skyAtmosphere._inspect().grounding;
+  const byName = (name) => grounding.anchors.filter((anchor) => anchor.node.name === name).length;
+  check(byName('hydrants') === 24,
+    `the hydrant batch is expanded to ${byName('hydrants')} separate anchors: one castShadow flag `
+    + 'was standing in for 24 objects on 24 different corners');
+  check(byName('lamp-column') === 1 && byName('pedestrian-7') === 1,
+    'the 12 cm lamp column and the pedestrian each get one');
+  check(byName('parked-car-bodies') === 140,
+    `and the ${byName('parked-car-bodies')} kerbside car instances the fixture builds, which is the `
+    + 'case the round-4 street card shows with no shadow under any of them');
+  check(byName('building-tower') === 0 && grounding.audit.skipped.casting === 1,
+    'the tower is left alone: the shadow map is already drawing it');
+  check(grounding.anchors.length === 166,
+    `${grounding.anchors.length} anchors in total; the 90 awning plates are refused because a 14 cm `
+    + 'plate is under the height floor and has no silhouette to project');
+  check(grounding.quads === grounding.anchors.length && mesh.visible === true,
+    `${grounding.quads} quads are drawn at 11:00 and the mesh is visible`);
+  // The darkness is the rig's own delivered key/fill, so a drawn contact
+  // shadow and the shadow map's shadow on the building beside it are the same
+  // shadow. It is NOT a chosen opacity.
+  const delivered = keyFillBalance(computeSkyModel({ hour: 11, weather: 'clear' })).achieved.ratio;
+  check(Math.abs(mesh.material.opacity - delivered / (1 + delivered)) < 1e-4,
+    `alpha ${mesh.material.opacity.toFixed(4)} is r/(1+r) for the delivered key/fill ${delivered}: `
+    + 'under linear compositing that leaves the receiver at exactly its fill-only radiance');
+  const at11 = { anchors: grounding.anchors.length, quads: grounding.quads, keyShare: grounding.keyShare };
+
+  const positionOf = (quad) => {
+    const position = mesh.geometry.getAttribute('position');
+    const out = [];
+    for (let v = 0; v < 4; v += 1) {
+      out.push(position.getX(quad * 4 + v), position.getY(quad * 4 + v), position.getZ(quad * 4 + v));
+    }
+    return out;
+  };
+  const morning = positionOf(0);
+  const model11 = computeSkyModel({ hour: 11, weather: 'clear' });
+  const horizontal11 = Math.hypot(model11.sun.x, model11.sun.z);
+  const footX = (morning[0] + morning[3]) / 2;
+  const footZ = (morning[2] + morning[5]) / 2;
+  const tipX = (morning[6] + morning[9]) / 2;
+  const tipZ = (morning[8] + morning[11]) / 2;
+  const runLength = Math.hypot(tipX - footX, tipZ - footZ);
+  check(Math.abs((tipX - footX) / runLength - (-model11.sun.x / horizontal11)) < 0.02
+    && Math.abs((tipZ - footZ) / runLength - (-model11.sun.z / horizontal11)) < 0.02,
+    'the quad runs along the anti-solar azimuth taken from the sky model, not an authored direction');
+
+  // Move the clock: the quads must move with it.
+  ctx.hour = 15;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const afternoon = positionOf(0);
+  const moved = afternoon.some((value, index) => Math.abs(value - morning[index]) > 0.05);
+  check(moved,
+    'the same quad has different corners at 15:00 than at 11:00 - the element tracks the key, '
+    + 'which is exactly what the round-3 contact skirt could not do');
+
+  // Move an object: the quad must follow it.
+  matrix.makeTranslation(500, 0.375, 900);
+  hydrants.setMatrixAt(0, matrix);
+  hydrants.instanceMatrix.needsUpdate = true;
+  hydrants.updateMatrixWorld(true);
+  runtime.update(ctx, 1 / 60);
+  const followed = skyAtmosphere._inspect().grounding.anchors
+    .find((anchor) => anchor.node === hydrants && anchor.instance === 0);
+  check(Math.abs(followed.x - 500) < 1e-3 && Math.abs(followed.z - 900) < 1e-3,
+    'a moving object drags its contact with it, which is what pedestrians and traffic need');
+
+  // Sunset: the whole element must be gone. Not faint - gone.
+  ctx.hour = 21.5;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const dark = skyAtmosphere._inspect().grounding;
+  check(dark.quads === 0 && mesh.visible === false && mesh.material.opacity === 0,
+    'at 21:30 the grounding mesh draws zero quads, is invisible and has zero opacity: a projected '
+    + 'contact shadow cannot outlive the sun that projects it');
+  check(mesh.geometry.drawRange.count === 0,
+    'and the draw range is zero, so it is not even submitted');
+
+  // Back into the light: it must come back.
+  ctx.hour = 9;
+  for (let frame = 0; frame < 2; frame += 1) runtime.update(ctx, 1 / 60);
+  const dawn = skyAtmosphere._inspect().grounding;
+  check(dawn.quads === 166 && mesh.visible === true,
+    'and it returns with the sun the next morning');
+
+  const noonModel = computeSkyModel({ hour: 12, weather: 'clear' });
+  const noonShare = keyShareOfRatio(keyFillBalance(noonModel).achieved.ratio);
+  const noonPlan = projectedContactShadow({ height: 1.8, radius: 0.3 }, noonModel.sun, noonShare);
+  groundingRow = {
+    ...at11,
+    pedestrianThrow: noonPlan.length,
+    pedestrianAlpha: noonPlan.opacity,
   };
   runtime.dispose();
 });
@@ -1599,6 +2016,28 @@ if (shadowRow) {
     + `${shadowRow.worst.weather}, ${shadowRow.worst.shadow.toFixed(1)}/255`);
   console.log('  round 1 measured 55.7% of the golden-hour card\'s PIXELS under that threshold; these');
   console.log('  are surfaces, not pixels, so the two numbers are related but not comparable.');
+  console.log('  NOTE: this table is built from `achieved`, the solver\'s book. A matched key-off');
+  console.log('  capture shows that book is optimistic about the shadow side - see below.');
+}
+
+console.log('');
+console.log('delivered rig, checked against the matched key-off capture of 01-street-day');
+console.log('(11:00 clear, sun altitude 43.33 deg; key-off is what a fully shadowed surface gets):');
+console.log('  measured on that card, same pixels with the key on and off:');
+console.log('    footway      191.1 -> 68.8 /255   displayed lit/shadow 2.78');
+console.log('    carriageway   86.8 -> 12.5 /255   median 11.5, 55.4% of it under 12/255');
+console.log('    albedo-free scene-referred key/fill on the footway: 5.29 (booked: 2.78)');
+for (const row of deliveredRows) {
+  console.log(`  ${row.label.padEnd(20)} key ${f(row.key, 6, 2)}  env ${f(row.environment, 5, 2)}  `
+    + `punctual ${f(row.punctual, 5, 2)}  fill ${f(row.fill, 5, 2)}  key/fill ${f(row.ratio, 5, 2)}`);
+}
+if (deliveredRows[0]) {
+  console.log(`  predicted for the captured footway after this wave: `
+    + `${deliveredRows[0].predictedShadow.toFixed(1)} -> ${deliveredRows[0].predictedLit.toFixed(1)} /255, `
+    + `displayed ratio ${deliveredRows[0].predictedRatio.toFixed(2)} (card: 2.78)`);
+  console.log('  the shadow side is held, not cut: the whole change is on the lit side.');
+  console.log('  PREDICTION ONLY. It is the module\'s own model of the renderer\'s rig, anchored on');
+  console.log('  one card at one hour. It is not a capture and it is not visual evidence.');
 }
 
 console.log('');
@@ -1671,6 +2110,17 @@ for (const row of budgetRows) {
 if (contactRow) {
   console.log(`  contact grounding: ${contactRow.footprints} footprints -> ${contactRow.quads} quads, `
     + `${contactRow.vehicles} vehicles, ${contactRow.canopies} canopies, ${contactRow.skipped} skipped`);
+}
+if (contactAoRow) {
+  console.log(`  contact AO band: ${contactAoRow.width} m wide against a measured `
+    + `${contactAoRow.leak} m contact leak; strength ${contactAoRow.dayScale.toFixed(3)} at noon, `
+    + `${contactAoRow.nightScale.toFixed(4)} at 21:30 (round 3 shipped 3.6 m at a fixed 0.55)`);
+}
+if (groundingRow) {
+  console.log(`  grounding: ${groundingRow.anchors} anchors -> ${groundingRow.quads} quads at 11:00, `
+    + `alpha ${groundingRow.keyShare.toFixed(4)} = r/(1+r) for the delivered key/fill; `
+    + `a 1.8 m pedestrian at noon throws ${groundingRow.pedestrianThrow} m at alpha `
+    + `${groundingRow.pedestrianAlpha}; zero quads at 21:30`);
 }
 if (updateCostRow) {
   console.log(`  update over ${updateCostRow.frames} frames: mean ${updateCostRow.mean.toFixed(3)} ms, `

@@ -44,6 +44,7 @@ import {
   Color,
   DataTexture,
   DoubleSide,
+  DynamicDrawUsage,
   Group,
   LinearFilter,
   LinearSRGBColorSpace,
@@ -79,6 +80,16 @@ import {
   wetSurfaceGrade,
 } from '../environment-ibl.js';
 
+import {
+  GROUNDING_DEFAULTS,
+  collectGroundingAnchors,
+  groundingFrame,
+  groundingLength,
+  groundingTipWidth,
+  keyShareOfRatio,
+  refreshGroundingAnchor,
+} from '../shadow-casters.js';
+
 /** Identity of the scene content this pass builds. */
 export const SKY_ATMOSPHERE_VERSION = 'sky-atmosphere-v2';
 
@@ -112,7 +123,65 @@ const CLOUD_RINGS = 9;
 const HAZE_SEGMENTS = 56;
 const HAZE_RINGS = 5;
 const STAR_COUNT = 620;
-const CLOUD_TEXTURE_SIZE = 256;
+// Cloud sheet resolution.
+//
+// Round 3 baked the low deck at 256 and the frame came back reading as painted
+// sky. The arithmetic says why. The low deck's texture tiles every 1750 m and
+// sits at `radius * 0.17` = 657 m, so at 256 a texel is 6.84 m and subtends
+// 6.84/657 = 10.4 mrad = 0.60 deg. The capture runs a 47 deg horizontal field
+// across 2560 px, i.e. 54.5 px/deg, so one cloud texel is **33 screen pixels**
+// and the smallest feature the sheet can carry is a 65 px blob. That is a
+// poster, not a cloud.
+//
+// At 512 the same texel is 3.42 m and 16.3 px, and the composited detail
+// octave below runs at four times the base lattice frequency, so the finest
+// structure in the sheet lands at roughly 8 px. The high deck keeps half the
+// low deck's resolution: it tiles every 4600 m at `radius * 0.5` = 1932 m, so
+// 256 puts its texel at 29 px - already finer than round 3's LOW deck - and it
+// is thin cirrus at 0.24 opacity seen at a shallow angle.
+//
+// Budget: 512^2 + 256^2 at RGBA8 is 1,310,720 bytes against round 3's 409,600.
+// The whole pass still lands inside the declared 1,600,000 (measured below and
+// asserted per bucket by `scripts/verify/verify-sky-atmosphere.mjs`), so this
+// is a re-verification of the existing budget, not a new one.
+const CLOUD_TEXTURE_SIZE = 512;
+/** High deck edge, as a fraction of the low deck's. */
+const CLOUD_HIGH_SCALE = 0.5;
+/** Detail sheet edge, as a fraction of the deck it is composited into. */
+const CLOUD_DETAIL_SCALE = 0.5;
+// Detail-octave lattice, per deck. Four times the base lattice once the half
+// size sheet is tiled twice across the deck, which is the frequency step a
+// second octave wants; going finer puts the smallest noise cell under four
+// texels and the sheet starts aliasing against its own sampler.
+const CLOUD_DETAIL_LATTICE = Object.freeze([14, 12]);
+const CLOUD_DETAIL_OCTAVES = 3;
+/** Mixed into the deck seed so the detail octave is not a copy of the base. */
+const CLOUD_DETAIL_SEED = 0x9e37;
+// How hard the detail octave breaks up the deck's edge.
+//
+// Applied through a `4*a*(1-a)` window, which is zero at both ends and 1 in
+// the middle, so the detail lands entirely on the fringe: a solid overcast
+// stays solid, open sky stays open, and the coverage-weighted mean is
+// unchanged because the field is symmetric about 0.5 and the swing can never
+// clip. A plain multiply was tried first and is wrong for exactly that
+// reason - it clips against alpha 1 on the bright side only, and thinned the
+// fog bucket's deck from 0.97 to 0.82 mean alpha, which is not fog.
+//
+// 0.25 is the largest value the window admits without clipping anywhere
+// (`4*e*a*(1-a) <= min(a, 1-a)` for every a requires `e <= 0.25`), and it
+// swings the fringe by +/-0.25 alpha at the deck's own half-cover contour.
+const CLOUD_DETAIL_EROSION = 0.25;
+/** Peak-to-peak relief the detail octave adds to the shading term. */
+const CLOUD_DETAIL_RELIEF = 0.35;
+// Base darkening. A cumulus is bright where it is thin and dark where it is
+// thick, because the light reaching the underside has been scattered through
+// more water on the way. Round 3's sheet carried a -0.30*density term inside
+// the bake and still read as uniform white at deck scale; this is the same
+// idea at deck scale, keyed on the deck's own coverage rather than on the
+// noise, and written as a *multiplier* rather than a subtraction so it darkens
+// the thick interior in proportion instead of crushing the whole sheet toward
+// black and then needing a large gain to climb back out.
+const CLOUD_BASE_DARKEN = 0.35;
 const DITHER_TEXTURE_SIZE = 64;
 // Chosen so the pattern lands at roughly one texel per two screen pixels at the
 // capture's 47 deg field of view: the dome's u spans 360 deg, the frame sees
@@ -131,20 +200,116 @@ const MAX_CONTACT_EDGES = 48;
 // total, not on the per-building edge count.
 const MAX_CONTACT_QUADS = 14000;
 const MAX_PUDDLES = 360;
-// Round 2's 1.55 m skirt reads as a line at the wall rather than as occlusion.
-// The golden-hour card measured its ground at Otsu separation 1.7 over a
-// 500x160 px region - one luminance, no depth cue anywhere. A wider, gentler
-// gradient is what an ambient term would produce and is the only depth cue
-// available on a surface the key cannot reach.
-const CONTACT_WIDTH = 3.6;
-// Slightly under the 0.62 the skirt alone would want, because the renderer's
-// existing `contact-shadows` blob still contributes a little at the footprint
-// edge and the two stack.
+// Contact band width, in metres. This number is no longer chosen; it is read
+// off the shadow map.
+//
+// Round 3 shipped a 3.6 m skirt, mitred out to 9.4 m at a sharp corner, at a
+// fixed 0.55 alpha that never moved with the sun. The round-4 key-off pair
+// measures exactly what that produced. On the near footway of `01-street-day`,
+// at row 760, the frame steps from 210 to 171 across x=1330 with the key ON,
+// and from 71.5 to 38 at the same pixel with the key OFF. Inverting the
+// display transform, the key contributes 0.572 radiance on the bright side and
+// 0.291 on the dark side while the fill contributes 0.075 and 0.035: BOTH are
+// scaled by 0.50, which is an alpha-0.5 black quad composited in linear space,
+// and it is exactly `CONTACT_ALPHA`. The same boundary is at the same pixel in
+// `06-night-street`, where there is no sun at all to justify it.
+//
+// A skirt that wide is not ambient occlusion in the first place. For a wall of
+// height h, infinite in length, the cosine-weighted sky occlusion at ground
+// distance d is (1/2) h^2 / (h^2 + d^2): 0.500 at the wall, 0.484 at 3.6 m
+// from a 20 m wall. Wall AO does not fall off across a footway - it is a broad
+// canyon term, and this pass already delivers that through the light rig
+// (`canyonBounce`, `keyFillBalance`). Painting a band on top double-counts it.
+//
+// What a shadow map genuinely cannot deliver is the first few centimetres at
+// the contact line, and `contactShadowLeakMetres()` in ../shadow-casters.js
+// says how many: the depth pull-back that keeps the map free of acne erases
+// `depthPullback / sin(altitude)` metres of shadow at every contact. On the
+// shipped fit that is 0.277 m (round-3 diagnostics: `contactLeakMetres`). So
+// the band is that wide and no wider - it fills in precisely what the bias
+// plan erased, which is the one darkening on this ground that nothing else in
+// the stack is producing.
+const CONTACT_WIDTH = 0.28;
+// Mitre clamp. At 3.6 m the old 2.6x clamp could throw a 9.4 m wedge across a
+// footway from one needle-sharp corner, which is the wedge the round-3 review
+// recorded. At 0.28 m the same 2.6x is 0.73 m, but there is no reason to let a
+// crevice line widen at all beyond keeping the offset edge parallel, so it is
+// tightened here too.
+const CONTACT_MITRE_CLAMP = 1.5;
+// Alpha at the junction itself, falling to zero over CONTACT_WIDTH. Kept at
+// the round-3 value: a crevice line IS nearly black at its root, and what made
+// the old skirt wrong was its width and its constancy, not its peak.
 const CONTACT_ALPHA = 0.55;
+// Half-height of the under-canopy AO patch, in metres. A shopfront canopy
+// really does occlude the sky over the pavement it covers, so this one is
+// legitimate ambient occlusion; the round-3 version was simply at a fixed
+// strength day and night.
+const CANOPY_AO_ALPHA = 0.55;
+
+// --- grounding (sun-tracked projected contact shadows)
+//
+// Capacity of the merged grounding mesh, in quads. 1024 quads is 2048
+// triangles against a 48000 budget and 12288 floats rewritten per frame, which
+// is the same order as one instanced batch's matrix upload. The round-3 scene
+// reported 340 candidate meshes of which 165 were refused as sub-texel;
+// expanded per instance - a batch is one flag standing in for hundreds of
+// trees, lamps and people - the real population is in the low thousands, so
+// this is a cap that bites and `collectGroundingAnchors` allocates it
+// round-robin across sources so no single batch eats it.
+const MAX_GROUNDING_ANCHORS = 1024;
+// Clearance above the surface the object stands on, in metres. Larger than the
+// contact band's 0.035 because the quad reaches up to 26 m from the point
+// whose height it was measured at, and it must not submarine through a
+// pavement it is a few centimetres above. Still an order under the 0.15 m kerb
+// face, so a shadow on the footway cannot float over the kerb.
+const GROUNDING_LIFT = 0.06;
+const GROUNDING_MASK_SIZE = 64;
+// Frames after the world build at which the anchor set is re-collected.
+//
+// This pass is `order: 10`. Street furniture, vehicles and the crowd are
+// orders 40-60 and the crowd is built lazily some frames later still, so at
+// `build()` time none of the objects this feature exists for are in the scene
+// yet. Collecting on the first update catches the passes; the later two catch
+// lazily built content. Three traversals total, then it settles - a scan is a
+// `Box3` per mesh and is not something to run on a timer.
+const GROUNDING_COLLECT_FRAMES = Object.freeze([2, 60, 300, 900]);
+
+// --- ground-level practicals
+//
+// Clearance for the additive light patches, in metres. Round 3 used 0.025 and
+// the ground under every lamp in the round-4 night card is neutral, i.e. the
+// patches are not in the frame at all (see `quadSink.patch`). 0.12 m is the
+// largest lift that still cannot let a pool on the footway float clear of the
+// 0.15 m kerb face and appear over the carriageway, and it is an order more
+// than any datum disagreement this pass can have with a junction pad, a
+// footway crossfall or a slab the street-surface passes lay on top.
+//
+// A floating ADDITIVE patch is not the artifact a floating opaque one is:
+// there is nothing to see behind it, only light arriving slightly nearer the
+// viewer than the tarmac it belongs to.
+const POOL_LIFT = 0.12;
+// Grid resolution for the conforming patches. 4 x 4 puts a vertex every 5.8 m
+// across a 23 m pool, which tracks a smooth terrain heightfield to within
+// millimetres, and holds the whole practicals set inside the triangle budget:
+// 240 lamps x 16 quads x 2 sinks is 15360 triangles.
+const POOL_GRID = 4;
+const SPILL_GRID = 2;
 
 const DEG = Math.PI / 180;
 const clamp = (value, min, max) => (value < min ? min : value > max ? max : value);
 const finite = (value, fallback) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+const smoothstep = (edge0, edge1, x) => {
+  const t = clamp((x - edge0) / (edge1 - edge0 || 1e-9), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+const luminanceOf = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+
+// Elevation the fog colour is sampled at. Deliberately the same +2 deg the
+// model's own horizon probes use, so the sample and the ceiling it is clamped
+// against are the same measurement taken in different directions.
+const SKYLINE_ELEVATION_DEG = 2;
+const SKYLINE_SIN = Math.sin(SKYLINE_ELEVATION_DEG * DEG);
+const SKYLINE_COS = Math.cos(SKYLINE_ELEVATION_DEG * DEG);
 
 /** The one live build. `dispose()` clears it; `build()` replaces it. */
 let live = null;
@@ -372,6 +537,47 @@ function quadSink() {
       corner(-hw, hd);
       uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
       indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    },
+    /**
+     * Terrain-conforming rectangle: an `cells` x `cells` grid whose every
+     * vertex is placed by `surfaceY`, with UVs still spanning 0..1 over the
+     * whole rectangle so a radial mask lands exactly as it would on one quad.
+     *
+     * This exists because a light pool is 23 m across and a flat quad 25 mm
+     * above the pavement only clears it where the ground is level. Round 4's
+     * night card is the evidence: the pass builds 240 lamp pools and 240
+     * carriageway throws at full opacity with a colour calibrated to 82 and 72
+     * display steps, the bulb glows from the SAME material family and the same
+     * additive blending are plainly visible in the frame at their fixture
+     * height - and the ground under every one of them samples neutral
+     * (77,68,75 / 79,71,79 / 75,68,77 at the plaza; a 3000 K pool is
+     * 1 : 0.71 : 0.39). Light that is calibrated, built, visible in the air and
+     * absent on the ground is light that failed the depth test.
+     */
+    patch(x, z, w, d, rot, cells, surfaceY) {
+      const c = Math.cos(rot);
+      const s = Math.sin(rot);
+      const n = Math.max(1, Math.floor(cells));
+      const base = positions.length / 3;
+      for (let j = 0; j <= n; j += 1) {
+        const v = j / n;
+        const oz = (v - 0.5) * d;
+        for (let i = 0; i <= n; i += 1) {
+          const u = i / n;
+          const ox = (u - 0.5) * w;
+          const px = x + ox * c - oz * s;
+          const pz = z + ox * s + oz * c;
+          positions.push(px, surfaceY(px, pz), pz);
+          uvs.push(u, v);
+        }
+      }
+      for (let j = 0; j < n; j += 1) {
+        for (let i = 0; i < n; i += 1) {
+          const a = base + j * (n + 1) + i;
+          const b = a + n + 1;
+          indices.push(a, b, a + 1, a + 1, b, b + 1);
+        }
+      }
     },
     /** Free quad from four explicit corners, with explicit UVs. */
     quad(a, b, c, d, uvA, uvB, uvC, uvD) {
@@ -841,17 +1047,170 @@ function skyBillboardGeometry(size) {
  * @private
  */
 function bakeCloudSheet(index, spec, coverage) {
-  // The low deck carries the detail the player reads at eye level, so it gets
-  // the larger sheet and the extra octave; the high deck is thin cirrus seen at
-  // a shallow angle and does not repay either.
-  return renderCloudSheet({
-    size: index === 0 ? CLOUD_TEXTURE_SIZE : CLOUD_TEXTURE_SIZE * 0.75,
+  const size = index === 0 ? CLOUD_TEXTURE_SIZE : Math.round(CLOUD_TEXTURE_SIZE * CLOUD_HIGH_SCALE);
+  const detailSize = Math.round(size * CLOUD_DETAIL_SCALE);
+  // The deck's own shape: which parts of the sky have cloud in them at all.
+  const base = renderCloudSheet({
+    size,
     lattice: index === 0 ? 8 : 6,
     seed: spec.seed,
     coverage,
     softness: index === 0 ? 0.30 : 0.42,
-    octaves: index === 0 ? 5 : 4,
+    octaves: 5,
   });
+  // The second octave. Baked at coverage 0.5 with a full-width shoulder on
+  // purpose: that turns `renderCloudSheet`'s coverage threshold into a ramp
+  // across the whole shaped range, so the alpha channel comes back as a
+  // continuous 0..1 detail *field* rather than as a second set of hard-edged
+  // cells that would fight the deck's own silhouette.
+  const detail = renderCloudSheet({
+    size: detailSize,
+    lattice: CLOUD_DETAIL_LATTICE[index] || CLOUD_DETAIL_LATTICE[0],
+    seed: (spec.seed ^ CLOUD_DETAIL_SEED) >>> 0,
+    coverage: 0.5,
+    softness: 0.9,
+    octaves: CLOUD_DETAIL_OCTAVES,
+  });
+
+  const texels = size * size;
+  const data = new Uint8Array(texels * 4);
+  const relief = new Float32Array(texels);
+  const alpha = new Float32Array(texels);
+  const inv255 = 1 / 255;
+  // Coverage-weighted moments of the deck before and after the composite. The
+  // gain below holds the first moment fixed so this change adds structure
+  // without also changing how bright the deck is - a brightness change here
+  // would be an uncontrolled exposure change in the top half of every frame.
+  let baseWeight = 0;
+  let baseShadeSum = 0;
+  let baseShadeSq = 0;
+  let outWeight = 0;
+  let outReliefSum = 0;
+  for (let j = 0; j < size; j += 1) {
+    for (let i = 0; i < size; i += 1) {
+      const index2 = j * size + i;
+      const o = index2 * 4;
+      const bs = base.data[o] * inv255;
+      const ba = base.data[o + 3] * inv255;
+      baseWeight += ba;
+      baseShadeSum += bs * ba;
+      baseShadeSq += bs * bs * ba;
+      // Wind shear, done in whole texels so the composite still tiles.
+      //
+      // The detail sheet is half the deck's edge, so it repeats twice across
+      // it; `+ j` slides it one texel per row (a 45 deg lean over the sheet,
+      // an exact number of detail periods over the deck's height) and `j >> 1`
+      // stretches it 2:1 along that lean. The result is a fibrous, leaning
+      // grain instead of the isotropic blobs a second fBm would give, and
+      // every offset is an integer multiple of the detail period at the deck's
+      // own wrap, so the seam is still exactly as continuous as the base.
+      const du = (i + j) % detailSize;
+      const dv = (j >> 1) % detailSize;
+      const d = (dv * detailSize + du) * 4;
+      const ds = detail.data[d] * inv255;
+      const df = detail.data[d + 3] * inv255;
+      // Coverage: the detail field breaks up the deck's edge. See
+      // CLOUD_DETAIL_EROSION - the `4*ba*(1-ba)` window is what keeps a solid
+      // overcast solid and holds the deck's mean coverage exactly.
+      const a = clamp(ba + CLOUD_DETAIL_EROSION * 4 * ba * (1 - ba) * (2 * df - 1), 0, 1);
+      // Thickness at deck scale, from the deck's own coverage rather than from
+      // the noise, so the darkening tracks the silhouette the player reads.
+      const thick = smoothstep(0.25, 0.95, ba);
+      const s = bs * (1 - CLOUD_BASE_DARKEN * thick) + CLOUD_DETAIL_RELIEF * (ds - 0.5);
+      relief[index2] = s;
+      alpha[index2] = a;
+      outWeight += a;
+      outReliefSum += s * a;
+    }
+  }
+  const baseShadeMean = baseWeight > 0 ? baseShadeSum / baseWeight : 0;
+  const baseShadeVar = baseWeight > 0 ? Math.max(0, baseShadeSq / baseWeight - baseShadeMean * baseShadeMean) : 0;
+  const outReliefMean = outWeight > 0 ? outReliefSum / outWeight : 0;
+  const gain = outReliefMean > 1e-4 && baseShadeMean > 1e-4
+    ? clamp(baseShadeMean / outReliefMean, 0.5, 2)
+    : 1;
+  let shadeSum = 0;
+  let shadeSq = 0;
+  let clipped = 0;
+  let coveredTexels = 0;
+  for (let index2 = 0; index2 < texels; index2 += 1) {
+    const a = alpha[index2];
+    const s = clamp(relief[index2] * gain, 0, 1);
+    if (a > 0.02) {
+      coveredTexels += 1;
+      if (s <= 0 || s >= 1) clipped += 1;
+    }
+    shadeSum += s * a;
+    shadeSq += s * s * a;
+    const o = index2 * 4;
+    const byte = Math.round(s * 255);
+    data[o] = byte;
+    data[o + 1] = byte;
+    data[o + 2] = byte;
+    data[o + 3] = Math.round(a * 255);
+  }
+  const shadeMean = outWeight > 0 ? shadeSum / outWeight : 0;
+  const shadeVar = outWeight > 0 ? Math.max(0, shadeSq / outWeight - shadeMean * shadeMean) : 0;
+  // High-frequency energy: the mean absolute step to the next texel across and
+  // down, coverage-weighted, on the sheet's own grid. Deviation alone would
+  // rise from any large soft blob; this rises only if the sheet actually
+  // carries detail at texel scale, which is the thing a 256 sheet stretched
+  // over a 360 deg dome could not do. Reported for the base and the composite
+  // in the SAME units, so the ratio is the structure that was gained.
+  const clippedShareOf = (bytes, edge) => {
+    let hit = 0;
+    let covered = 0;
+    for (let o = 0; o < bytes.length; o += 4) {
+      if (bytes[o + 3] <= 5) continue;
+      covered += 1;
+      if (bytes[o] <= 0 || bytes[o] >= 255) hit += 1;
+    }
+    return covered > 0 ? hit / covered : 0;
+  };
+  const detailEnergy = (bytes, edge) => {
+    let sum = 0;
+    let weight = 0;
+    for (let j = 0; j < edge; j += 1) {
+      for (let i = 0; i < edge; i += 1) {
+        const o = (j * edge + i) * 4;
+        const a = bytes[o + 3] / 255;
+        if (a <= 0.02) continue;
+        const right = ((j * edge) + (i + 1) % edge) * 4;
+        const down = ((((j + 1) % edge) * edge) + i) * 4;
+        sum += a * (Math.abs(bytes[o] - bytes[right]) + Math.abs(bytes[o] - bytes[down])) / (2 * 255);
+        weight += a;
+      }
+    }
+    return weight > 0 ? sum / weight : 0;
+  };
+  const round4 = (value) => Math.round(value * 10000) / 10000;
+  return {
+    width: size,
+    height: size,
+    data,
+    stats: {
+      size,
+      detailSize,
+      detailLattice: CLOUD_DETAIL_LATTICE[index] || CLOUD_DETAIL_LATTICE[0],
+      detailOctaves: CLOUD_DETAIL_OCTAVES,
+      gain: round4(gain),
+      /** Coverage-weighted mean shade. Held equal to the base sheet's. */
+      baseShadeMean: round4(baseShadeMean),
+      shadeMean: round4(shadeMean),
+      /** Coverage-weighted shade spread. */
+      baseShadeDeviation: round4(Math.sqrt(baseShadeVar)),
+      shadeDeviation: round4(Math.sqrt(shadeVar)),
+      /** Texel-scale shade energy. This is the structure that was added. */
+      baseShadeDetail: round4(detailEnergy(base.data, size)),
+      shadeDetail: round4(detailEnergy(data, size)),
+      /** Share of the covered sheet driven to pure black or pure white. */
+      baseClippedShare: round4(clippedShareOf(base.data, size)),
+      clippedShare: round4(outWeight > 0 ? clipped / Math.max(1e-6, coveredTexels) : 0),
+      /** Mean alpha: how much of the sky the deck covers, before and after. */
+      baseCoverage: round4(baseWeight / texels),
+      coverage: round4(outWeight / texels),
+    },
+  };
 }
 
 function buildClouds(profile, radius) {
@@ -883,7 +1242,20 @@ function buildClouds(profile, radius) {
     mesh.renderOrder = -6 + i;
     mesh.frustumCulled = false;
     group.add(mesh);
-    layers.push({ spec, mesh, material, texture, tile: tiles[i], geometry, index: i, coverage: profile.coverage });
+    layers.push({
+      spec,
+      mesh,
+      material,
+      texture,
+      tile: tiles[i],
+      geometry,
+      index: i,
+      coverage: profile.coverage,
+      stats: sheet.stats,
+      /** Screen size of one sheet texel on the capture card. See CLOUD_TEXTURE_SIZE. */
+      metresPerTexel: Math.round((tiles[i] / sheet.width) * 100) / 100,
+      altitude: Math.round(altitudes[i]),
+    });
   }
   return { group, layers, textures };
 }
@@ -922,22 +1294,23 @@ function buildHaze(radius, height) {
 }
 
 /**
- * Contact grounding: a mitred darkening skirt that follows each building's
- * real footprint.
+ * Contact band: the crevice line at the wall/ground junction that the shadow
+ * map's own bias plan erases.
  *
- * The renderer already draws a `contact-shadows` mesh, but it is one
- * axis-aligned quad per building carrying a radial blob, so on a non-rectangular
- * or rotated footprint the dark patch does not touch the wall it belongs to.
- * That is why the baseline frame has no darkening at the wall/ground junction
- * even though a contact pass is running. This follows the polygon, mitres the
- * corners so there is no wedge-shaped gap, and fades outward over `CONTACT_WIDTH`.
- * The legacy blob is hidden while this pass is live and restored on dispose.
+ * This is ambient occlusion and nothing else. It follows the real footprint
+ * polygon, mitres the corners, and fades to nothing over `CONTACT_WIDTH`
+ * metres - which is `contactShadowLeakMetres()` for the shipped fit, not a
+ * taste value. See the constant for the measurement that condemned the round-3
+ * version.
  *
- * A screen-space AO term would be the better answer, but there is no
- * post-processing stage on the canonical path and adding one would mean a
- * render target and a shader this pass is not allowed to introduce. This is
- * the geometry-baked equivalent the brief asks for, and it survives the
- * software backend because it is one merged mesh with one basic material.
+ * Because it is AO, its strength tracks the SKY, not the sun: `retimeContactAO`
+ * scales it by how much sky illuminance there is to occlude. That is the
+ * property the round-3 review demanded and the round-3 build failed - the old
+ * skirt's boundary sat at the identical pixel at 11:00 and at 21:30 and was
+ * just as dark under a sun 18 degrees below the horizon.
+ *
+ * The renderer's own `contact-shadows` mesh is deliberately left alone; see the
+ * note in `buildPass`.
  * @private
  */
 function buildContactGrounding(ctx, city, datum, proximity) {
@@ -999,7 +1372,7 @@ function buildContactGrounding(ctx, city, datum, proximity) {
       if (len < 1e-4) { mx = next.x; mz = next.z; }
       else { mx /= len; mz /= len; }
       const cosHalf = Math.max(0.35, mx * next.x + mz * next.z);
-      const scale = clamp(CONTACT_WIDTH / cosHalf, CONTACT_WIDTH, CONTACT_WIDTH * 2.6);
+      const scale = clamp(CONTACT_WIDTH / cosHalf, CONTACT_WIDTH, CONTACT_WIDTH * CONTACT_MITRE_CLAMP);
       offsets.push({ x: mx * scale, z: mz * scale });
     }
     for (let i = 0; i < n; i += 1) {
@@ -1107,6 +1480,217 @@ function buildUnderObjectShading(ctx, datum) {
 }
 
 /**
+ * Alpha mask for one projected contact shadow.
+ *
+ * `u` runs along the throw (0 at the object's foot, 1 at the tip) and `v`
+ * across it. The cross-section is flat-topped with soft shoulders, which is
+ * what a penumbra looks like on a surface; the along-throw profile is opaque
+ * for the first half and fades out over the last, because the further the
+ * shadow travels the wider its penumbra is relative to the occluder and the
+ * less of the solar disc is actually blocked.
+ * @private
+ */
+function groundShadowMask(size) {
+  const data = new Uint8Array(size * size * 4);
+  const smooth = (e0, e1, x) => {
+    const t = clamp((x - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
+  for (let j = 0; j < size; j += 1) {
+    const v = j / (size - 1);
+    const across = 1 - Math.abs(2 * v - 1);
+    const cross = Math.pow(clamp(across, 0, 1), 0.55);
+    for (let i = 0; i < size; i += 1) {
+      const u = i / (size - 1);
+      const along = 1 - smooth(0.5, 1, u);
+      const o = (j * size + i) * 4;
+      data[o] = 255;
+      data[o + 1] = 255;
+      data[o + 2] = 255;
+      data[o + 3] = Math.round(clamp(cross * along, 0, 1) * 255);
+    }
+  }
+  return { data, width: size, height: size };
+}
+
+/**
+ * The grounding mesh: one merged, preallocated quad set that carries a
+ * projected contact shadow for every object the shadow map refused.
+ *
+ * Preallocated because the anchor set is discovered after the build (see
+ * `GROUNDING_COLLECT_FRAMES`) and rewritten every frame; growing a buffer
+ * geometry per frame would be a per-frame allocation in a pass that is not
+ * allowed one. Positions are the only attribute that ever changes.
+ * @private
+ */
+function buildGrounding(capacity) {
+  const positions = new Float32Array(capacity * 4 * 3);
+  const uvs = new Float32Array(capacity * 4 * 2);
+  const indices = new Uint16Array(capacity * 6);
+  for (let q = 0; q < capacity; q += 1) {
+    const v = q * 4;
+    // (foot,-w) (foot,+w) (tip,+w) (tip,-w); u along the throw, v across it.
+    uvs.set([0, 0, 0, 1, 1, 1, 1, 0], q * 8);
+    indices.set([v, v + 1, v + 2, v, v + 2, v + 3], q * 6);
+  }
+  const geometry = new BufferGeometry();
+  const position = new BufferAttribute(positions, 3);
+  position.setUsage(DynamicDrawUsage);
+  geometry.setAttribute('position', position);
+  geometry.setAttribute('uv', new BufferAttribute(uvs, 2));
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  geometry.setDrawRange(0, 0);
+  geometry.name = 'sky-atmosphere:grounding';
+
+  const mask = groundShadowMask(GROUNDING_MASK_SIZE);
+  const texture = byteTexture(mask.data, mask.width, mask.height, {
+    name: 'sky-atmosphere:grounding-mask',
+  });
+  const material = new MeshBasicMaterial({
+    map: texture,
+    color: 0x000000,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    side: DoubleSide,
+    fog: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const mesh = new Mesh(geometry, material);
+  mesh.name = 'sky-atmosphere:grounding';
+  mesh.renderOrder = 2;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  // The quad set covers the whole city and is rewritten every frame, so a
+  // bounding sphere would be recomputed for nothing.
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  return {
+    mesh, material, texture, geometry, positions, capacity,
+    anchors: [], quads: 0, collects: 0, frame: null, audit: null,
+  };
+}
+
+/**
+ * Find the objects that need grounding. Runs a handful of times after the
+ * world build, never on a timer. @private
+ */
+function collectGrounding(state, ctx) {
+  const root = ctx?.root;
+  const grounding = state.grounding;
+  if (!grounding || !root || typeof root.traverse !== 'function') return;
+  try {
+    const audit = collectGroundingAnchors(root, {
+      maxAnchors: grounding.capacity,
+      // Never ground this pass's own decals, and never ground the sky.
+      skip: (object) => object === state.root
+        || (typeof object.name === 'string' && object.name.startsWith('sky-atmosphere:')),
+    });
+    grounding.anchors = audit.anchors;
+    grounding.audit = {
+      anchors: audit.anchors.length,
+      sources: audit.sources,
+      scanned: audit.scanned,
+      candidates: audit.candidates,
+      capped: audit.capped,
+      skipped: audit.skipped,
+    };
+  } catch {
+    // A grounding scan is cosmetic. A pass must not take the world down.
+    grounding.anchors = [];
+  }
+  grounding.collects += 1;
+}
+
+/**
+ * Rewrite every grounding quad for the current sun.
+ *
+ * Called every frame, not on the hour bucket, because half the anchors are
+ * walking or driving. The work is one matrix apply and twelve float writes per
+ * anchor; at the 1024 cap that is the same order as one instanced batch's own
+ * per-frame matrix upload.
+ *
+ * Returns the number of quads drawn. Zero means the sun is down, and the mesh
+ * is switched off entirely - which is the property the round-3 review demanded
+ * and the contact skirt could not offer.
+ * @private
+ */
+function retimeGrounding(state, model, balance) {
+  const grounding = state.grounding;
+  if (!grounding) return 0;
+  // The DELIVERED key share, not the physical one. See `keyShareOfRatio`: the
+  // rig corrects key/fill on purpose, and a drawn shadow that removed the
+  // physical key share would be a different darkness from the shadow map's own
+  // on the building next to it.
+  const share = keyShareOfRatio(balance?.achieved?.ratio);
+  const frame = groundingFrame(model.sun, share);
+  grounding.frame = frame;
+  grounding.keyShare = share;
+  if (!frame.active || !grounding.anchors.length) {
+    grounding.quads = 0;
+    grounding.geometry.setDrawRange(0, 0);
+    grounding.mesh.visible = false;
+    grounding.material.opacity = 0;
+    return 0;
+  }
+  grounding.material.opacity = frame.opacity;
+
+  const heightAt = state.heightAt;
+  const positions = grounding.positions;
+  const dirX = frame.dirX;
+  const dirZ = frame.dirZ;
+  // Perpendicular, in the ground plane.
+  const perpX = -dirZ;
+  const perpZ = dirX;
+  let quads = 0;
+  for (let i = 0; i < grounding.anchors.length && quads < grounding.capacity; i += 1) {
+    const anchor = grounding.anchors[i];
+    if (!refreshGroundingAnchor(anchor)) continue;
+    const length = groundingLength(frame, anchor.height);
+    if (!(length > 0)) continue;
+    const baseHalf = anchor.radius;
+    const tipHalf = groundingTipWidth(frame, anchor.radius * 2, length) * 0.5;
+    // The quad starts one radius BEHIND the base so the object's own footprint
+    // is covered: a shadow includes the ground the object is standing on.
+    const footX = anchor.x - dirX * baseHalf;
+    const footZ = anchor.z - dirZ * baseHalf;
+    const tipX = anchor.x + dirX * length;
+    const tipZ = anchor.z + dirZ * length;
+    const footY = anchor.y + GROUNDING_LIFT;
+    // Follow the terrain's slope out to the tip, keeping whatever pavement
+    // offset the base had. A flat quad on a 6% grade is 1.5 m out of the
+    // ground at 26 m, and this city has grades far steeper than that.
+    let tipY = footY;
+    if (heightAt && length > 3) {
+      const base = finite(heightAt(anchor.x, anchor.z), NaN);
+      const far = finite(heightAt(tipX, tipZ), NaN);
+      if (Number.isFinite(base) && Number.isFinite(far)) tipY = footY + (far - base);
+    }
+    const o = quads * 12;
+    positions[o] = footX - perpX * baseHalf;
+    positions[o + 1] = footY;
+    positions[o + 2] = footZ - perpZ * baseHalf;
+    positions[o + 3] = footX + perpX * baseHalf;
+    positions[o + 4] = footY;
+    positions[o + 5] = footZ + perpZ * baseHalf;
+    positions[o + 6] = tipX + perpX * tipHalf;
+    positions[o + 7] = tipY;
+    positions[o + 8] = tipZ + perpZ * tipHalf;
+    positions[o + 9] = tipX - perpX * tipHalf;
+    positions[o + 10] = tipY;
+    positions[o + 11] = tipZ - perpZ * tipHalf;
+    quads += 1;
+  }
+  grounding.quads = quads;
+  grounding.geometry.getAttribute('position').needsUpdate = true;
+  grounding.geometry.setDrawRange(0, quads * 6);
+  grounding.mesh.visible = quads > 0 && frame.opacity > 0.008;
+  return quads;
+}
+
+/**
  * Night practicals: what the street's own lights put on the ground and in the
  * air. Three separate merged meshes, because they blend differently - the
  * pools and the bulb glows are additive, the shop spill is a warm wash that
@@ -1116,6 +1700,32 @@ function buildUnderObjectShading(ctx, datum) {
 function buildNightPracticals(ctx, profile, datum, streets) {
   const heightAt = typeof ctx.heightAt === 'function' ? ctx.heightAt : () => 0;
   const footwayY = (x, z) => finite(heightAt(x, z), 0) + datum.footwayLift + 0.025;
+  /**
+   * The paved surface under an arbitrary point: the carriageway's own crowned
+   * cross-section inside the kerb line, the footway datum outside it. This is
+   * what a light pool has to lie on, and it is sampled per grid vertex rather
+   * than once per pool, because a pool is 23 m across and the ground under it
+   * is not level.
+   */
+  const surfaceNear = (street) => {
+    if (!street) {
+      return (px, pz) => finite(heightAt(px, pz), 0) + datum.footwayLift + POOL_LIFT;
+    }
+    // `street.x/z` is the fixture's own projection onto the segment, so the
+    // line through it along `(dx, dz)` IS the centreline: one query per patch
+    // gives every vertex an exact lateral offset, and the whole patch stays on
+    // ONE segment instead of flip-flopping between two at a junction.
+    const perpX = -street.dz;
+    const perpZ = street.dx;
+    return (px, pz) => {
+      const terrain = finite(heightAt(px, pz), 0);
+      const lateral = Math.abs((px - street.x) * perpX + (pz - street.z) * perpZ);
+      if (lateral <= street.half) {
+        return datum.crossSectionY(terrain, lateral, street.half) + POOL_LIFT;
+      }
+      return terrain + datum.footwayLift + POOL_LIFT;
+    };
+  };
   const lampGroup = ctx.legacyGroup?.('street-lamps');
   const pools = quadSink();
   const road = quadSink();
@@ -1140,11 +1750,13 @@ function buildNightPracticals(ctx, profile, datum, streets) {
       // same brightness reads as a texture, not as lighting.
       const jitter = 0.82 + 0.36 * hash01(hashString(`${lamp.name || 'lamp'}:${i}`));
       const radius = profile.pool.radius * jitter;
-      pools.rect(x, ground, z, radius * 2, radius * 2);
-      // The throw across the carriageway. Placed on the road's own crown
-      // rather than on the footway, and oriented along the street so adjacent
-      // fixtures overlap into a continuous band instead of a row of spots.
+      // The throw across the carriageway. Oriented along the street so adjacent
+      // fixtures overlap into a continuous band instead of a row of spots, and
+      // laid on the carriageway's own crowned cross-section rather than on a
+      // single flat datum.
       const street = streets.query(x, z);
+      const pavedY = surfaceNear(street && street.distance < 26 ? street : null);
+      pools.patch(x, z, radius * 2, radius * 2, 0, POOL_GRID, pavedY);
       if (street && street.distance < 26) {
         const toRoadX = street.x - x;
         const toRoadZ = street.z - z;
@@ -1154,13 +1766,14 @@ function buildNightPracticals(ctx, profile, datum, streets) {
         const bias = Math.min(street.half * 0.55, reach * 0.32);
         const cx = toRoad > 1e-3 ? x + (toRoadX / toRoad) * bias : x;
         const cz = toRoad > 1e-3 ? z + (toRoadZ / toRoad) * bias : z;
-        road.rect(
+        road.patch(
           cx,
-          datum.crownY(finite(heightAt(cx, cz), 0), street.half) + 0.04,
           cz,
           profile.pool.carriageway.length * jitter,
           reach * 2,
           Math.atan2(street.dz, street.dx),
+          POOL_GRID,
+          pavedY,
         );
         carriagewayPools += 1;
       }
@@ -1186,7 +1799,9 @@ function buildNightPracticals(ctx, profile, datum, streets) {
       const z = world.z;
       if (!Number.isFinite(x) || !Number.isFinite(z)) return;
       const depth = profile.shopSpill.depth * (0.8 + 0.5 * hash01(hashString(`spilld:${index}`)));
-      spill.rect(x, footwayY(x, z) + 0.01, z, 4.2, depth, node.rotation?.y || 0);
+      const spillStreet = streets.query(x, z);
+      spill.patch(x, z, 4.2, depth, node.rotation?.y || 0, SPILL_GRID,
+        surfaceNear(spillStreet && spillStreet.distance < 26 ? spillStreet : null));
       spills += 1;
     });
   }
@@ -1358,10 +1973,106 @@ function buildWetSheen(ctx, city, grade, datum) {
   return { mesh, material, texture, geometry, puddles: placed };
 }
 
+// ---------------------------------------------------------------- aerial
+
+const _forward = new Vector3();
+const _skyline = [0, 0, 0];
+
+/**
+ * Camera forward, without trusting a stale `matrixWorld`.
+ *
+ * `getWorldDirection` refreshes the camera's own world matrix before reading
+ * it, which matters here: the pass runtime runs before the renderer updates
+ * the graph, so reading `matrixWorld` directly would give last frame's
+ * orientation and a single-frame capture would get the fog of a pose it never
+ * rendered.
+ * @private
+ */
+function cameraForward(camera, out) {
+  if (camera && typeof camera.getWorldDirection === 'function') {
+    try {
+      camera.getWorldDirection(out);
+      if (Number.isFinite(out.x) && Number.isFinite(out.z) && Math.hypot(out.x, out.z) > 1e-6) return out;
+    } catch {
+      // fall through to the default heading
+    }
+  }
+  out.set(0, 0, -1);
+  return out;
+}
+
+/**
+ * The colour distance has to converge on.
+ *
+ * Round 3 handed `scene.fog` the module's `aerialPerspective().color`, which
+ * is `mix(horizonRadiance, sunwardHorizonRadiance, 0.35)` - one number for the
+ * whole compass, biased a third of the way toward the brightest point on the
+ * skyline. Measured on the captured 15:00 clear card that is
+ * [1.1580, 1.6204, 1.7192], luminance 1.529, against a horizon of
+ * [0.9205, 1.3171, 1.4180] at 1.240 and an anti-solar skyline at 0.826. So the
+ * far field was being blended toward a colour 23% brighter than the average
+ * sky and 85% brighter than the sky actually behind it whenever the camera was
+ * not pointed at the sun. That is the painted white band at the end of the
+ * street: aerial perspective converging on white instead of on the sky.
+ *
+ * The fix is to ask the same dome function the frame is drawing what colour it
+ * is in the direction the camera is looking, at the elevation distant geometry
+ * is seen against, and hand *that* to the fog. Two ceilings keep it honest:
+ *
+ *  1. a hue-preserving luminance clamp to the model's own `horizonLuminance`,
+ *     so looking into a low sun cannot drive the whole frame's fog above the
+ *     sky's average skyline while it keeps the warm ratio that direction has;
+ *  2. a hard per-channel clamp to `horizonRadiance`, because `scene.fog` is
+ *     one colour applied to every pixel and geometry at the edge of the frame
+ *     is not looking where the camera is.
+ *
+ * Sampling elevation is +2 deg, which is exactly where `computeSkyModel`'s own
+ * horizon probes sit, so the sample and its ceiling are the same measurement
+ * taken in different directions rather than two different models.
+ *
+ * `computeSkyModel` remains the sole authority: nothing here feeds back into
+ * sun direction, irradiance or exposure.
+ * @private
+ */
+function skylineRadiance(model, forwardX, forwardZ, out = [0, 0, 0]) {
+  const horizontal = Math.hypot(forwardX, forwardZ);
+  const nx = horizontal > 1e-6 ? forwardX / horizontal : 0;
+  const nz = horizontal > 1e-6 ? forwardZ / horizontal : -1;
+  skyDomeRadiance(model, nx * SKYLINE_COS, SKYLINE_SIN, nz * SKYLINE_COS, {}, out);
+  const ceiling = model.horizonRadiance;
+  const level = luminanceOf(out);
+  const ceilingLevel = finite(model.horizonLuminance, luminanceOf(ceiling));
+  if (level > ceilingLevel && level > 1e-9) {
+    const scale = ceilingLevel / level;
+    out[0] *= scale;
+    out[1] *= scale;
+    out[2] *= scale;
+  }
+  out[0] = clamp(out[0], 0, ceiling[0]);
+  out[1] = clamp(out[1], 0, ceiling[1]);
+  out[2] = clamp(out[2], 0, ceiling[2]);
+  return out;
+}
+
+/**
+ * Write the fog colour for the current view direction. Returns the linear RGB
+ * it used so the caller can report it. @private
+ */
+function applyFogColor(state, camera) {
+  if (!state.model) return state.fogRgb;
+  cameraForward(camera, _forward);
+  skylineRadiance(state.model, _forward.x, _forward.z, _skyline);
+  state.fogRgb[0] = _skyline[0];
+  state.fogRgb[1] = _skyline[1];
+  state.fogRgb[2] = _skyline[2];
+  setLinear(state.fogColor, _skyline);
+  return state.fogRgb;
+}
+
 // ---------------------------------------------------------------- retiming
 
 /** Recolour the dome and re-aim the sun/moon/stars for a sky model. @private */
-function retimeSky(sky, model, aerial, cloud, exposure) {
+function retimeSky(sky, model, cloud, exposure) {
   const colors = sky.domeGeometry.getAttribute('color');
   const positions = sky.domeGeometry.getAttribute('position');
   const rgb = [0, 0, 0];
@@ -1374,7 +2085,14 @@ function retimeSky(sky, model, aerial, cloud, exposure) {
     const x = positions.getX(i) * inverse;
     const y = positions.getY(i) * inverse;
     const z = positions.getZ(i) * inverse;
-    skyDomeRadiance(model, x, y, z, { hazeColor: aerial.color }, rgb);
+    // The dome's own aerosol band and its below-horizon join now blend to the
+    // model's measured `horizonRadiance` (skyDomeRadiance's default), not to
+    // the averaged-and-sun-biased term the fog used to take. That is what
+    // keeps the join exact: the fog colour above is a sample of THIS function
+    // at the view azimuth, so at the skyline the dome and the fog are the same
+    // number by construction, and the only place they can differ is below the
+    // skyline, which the streetwall covers.
+    skyDomeRadiance(model, x, y, z, undefined, rgb);
     colors.setXYZ(i, rgb[0], rgb[1], rgb[2]);
     // Only the visible upper dome: the ground hemisphere is never the thing
     // that bands, and averaging it in would drag the reference far too low.
@@ -1467,6 +2185,7 @@ function retimeClouds(clouds, profile) {
       layer.texture.image.data.set(sheet.data);
       layer.texture.needsUpdate = true;
       layer.coverage = profile.coverage;
+      layer.stats = sheet.stats;
     }
   }
   for (const layer of clouds.layers) {
@@ -1478,16 +2197,39 @@ function retimeClouds(clouds, profile) {
   }
 }
 
-/** Apply the aerial-perspective numbers to the scene fog and the haze band. @private */
-function retimeAerial(state, aerial) {
+/**
+ * Apply the aerial-perspective numbers to the scene fog and the haze band.
+ *
+ * The depth pair (`near`/`far`) is still entirely the module's: it is a map
+ * property graded by weather and sun altitude and this pass has no business
+ * second-guessing it. Only the *colours* are re-derived, against the sky's own
+ * measured radiance - see `skylineRadiance`.
+ * @private
+ */
+function retimeAerial(state, aerial, camera) {
   const fog = state.scene?.fog;
   if (fog) {
     fog.near = aerial.near;
     fog.far = aerial.far;
-    setLinear(fog.color, aerial.color);
+    applyFogColor(state, camera);
+    fog.color.copy(state.fogColor);
   }
   if (state.haze) {
-    setLinear(state.haze.material.color, aerial.haze.color);
+    // The ground haze is the air standing in the street, seen in every
+    // direction at once, so it stays view-independent - but it cannot be
+    // brighter than the sky that is lighting it either. Round 3 shipped
+    // [1.0220, 1.4353, 1.5821] against a measured horizon of
+    // [0.9205, 1.3171, 1.4180]: 11% of glow that no sky in the frame produces.
+    const ceiling = state.model ? state.model.horizonRadiance : null;
+    const hazeColor = ceiling
+      ? [
+        clamp(aerial.haze.color[0], 0, ceiling[0]),
+        clamp(aerial.haze.color[1], 0, ceiling[1]),
+        clamp(aerial.haze.color[2], 0, ceiling[2]),
+      ]
+      : aerial.haze.color;
+    state.hazeRgb = hazeColor;
+    setLinear(state.haze.material.color, hazeColor);
     state.haze.material.opacity = aerial.haze.density;
     state.haze.mesh.visible = aerial.haze.density > 0.012;
     // The band's height is baked into the geometry, so it is scaled rather
@@ -1514,6 +2256,54 @@ function retimeWet(state, grade) {
   wet.material.envMapIntensity = grade.envMapIntensity;
   wet.material.opacity = clamp(grade.sheenOpacity * 2.1, 0, 0.95);
   wet.mesh.visible = wet.material.opacity > 0.02;
+}
+
+/**
+ * How much sky there is to occlude, 0..1, relative to a clear solar noon.
+ *
+ * Ambient occlusion darkens a surface by removing the *sky* it cannot see. If
+ * there is no sky light, there is nothing for AO to remove, and a fixed-alpha
+ * AO decal at 21:30 is painting darkness onto a surface that has no light on
+ * it - which is exactly the defect the round-3 review measured on this pass's
+ * contact skirt.
+ *
+ * The reference is the peak clear-sky illuminance the model itself reports, so
+ * this is a measured ratio rather than a curve anybody authored. At 21:30 the
+ * sky delivers 0.029 against a noon 1.076, so the AO term runs at 2.7% - a
+ * hairline, not a wedge.
+ * @private
+ */
+let peakSkyIlluminance = 0;
+function skyOcclusionScale(illuminance) {
+  if (!peakSkyIlluminance) {
+    let peak = 0;
+    for (let hour = 11; hour <= 14; hour += 1) {
+      const sky = finite(recommendedExposure(computeSkyModel({ hour, weather: 'clear' })).illuminance?.sky, 0);
+      if (sky > peak) peak = sky;
+    }
+    peakSkyIlluminance = peak > 0 ? peak : 1;
+  }
+  const sky = finite(illuminance?.sky, 0);
+  return clamp(sky / peakSkyIlluminance, 0, 1);
+}
+
+/**
+ * Scale the two ambient-occlusion elements - the contact band at the wall and
+ * the patch under a shopfront canopy - by how much sky is available to occlude.
+ * @private
+ */
+function retimeContactAO(state, illuminance) {
+  const scale = skyOcclusionScale(illuminance);
+  state.aoScale = scale;
+  if (state.contact) {
+    state.contact.material.opacity = scale;
+    state.contact.mesh.visible = scale > 0.02;
+  }
+  if (state.underObject) {
+    state.underObject.material.opacity = CANOPY_AO_ALPHA * scale;
+    state.underObject.mesh.visible = state.underObject.material.opacity > 0.012;
+  }
+  return scale;
 }
 
 /** Turn the night practicals up or down. @private */
@@ -1639,6 +2429,10 @@ function buildPass(ctx) {
   for (const part of practicals.parts) root.add(part.mesh);
   const wet = buildWetSheen(ctx, city, wetAsphalt, datum);
   if (wet) root.add(wet.mesh);
+  // Sun-tracked grounding for everything the shadow map refused. Empty at
+  // build: the passes that own trees, vehicles and people have not run yet.
+  const grounding = buildGrounding(MAX_GROUNDING_ANCHORS);
+  root.add(grounding.mesh);
 
   // Deliberately *not* hiding the renderer's own `sky-dome` or
   // `contact-shadows`.
@@ -1682,25 +2476,40 @@ function buildPass(ctx) {
     underObject,
     practicals,
     wet,
+    grounding,
     suppressed,
     radius,
     mapSpan,
     weather,
     datum,
+    heightAt: typeof ctx?.heightAt === 'function' ? ctx.heightAt : null,
+    /** Frames since build, for the deferred grounding scans. */
+    frames: 0,
+    /** Last model/balance, so the per-frame grounding needs no recompute. */
+    model,
+    illuminance: exposure.illuminance,
+    balance,
+    aoScale: 1,
     bucket: null,
+    /** The live sky model. The fog colour is sampled out of it every frame. */
+    model,
     fogNear: aerial.near,
     fogFar: aerial.far,
     fogColor: new Color(),
+    /** Linear RGB actually handed to the fog, kept for diagnostics. */
+    fogRgb: [0, 0, 0],
+    hazeRgb: aerial.haze.color,
     lastCameraX: 0,
     lastCameraZ: 0,
   };
-  setLinear(state.fogColor, aerial.color);
 
-  retimeSky(sky, model, aerial, cloud, exposure.exposure);
+  retimeSky(sky, model, cloud, exposure.exposure);
   retimeClouds(clouds, cloud);
-  retimeAerial(state, aerial);
+  retimeAerial(state, aerial, ctx?.camera);
   retimePracticals(state, practical, exposure.exposure);
   retimeWet(state, wetAsphalt);
+  retimeContactAO(state, exposure.illuminance);
+  retimeGrounding(state, model, balance);
   state.bucket = `${weather}|${quantiseHour(hour, SKY_ATMOSPHERE_BUDGET.hourQuantum).toFixed(4)}`;
 
   let textureBytes = 0;
@@ -1716,6 +2525,10 @@ function buildPass(ctx) {
   if (underObject) countTexture(underObject.texture);
   for (const texture of practicals.textures) countTexture(texture);
   if (wet) countTexture(wet.texture);
+  countTexture(grounding.texture);
+
+  const round4 = (value) => Math.round(value * 10000) / 10000;
+  const round4v = (rgb) => [round4(rgb[0]), round4(rgb[1]), round4(rgb[2])];
 
   const diagnostics = {
     pass: SKY_ATMOSPHERE_VERSION,
@@ -1763,20 +2576,44 @@ function buildPass(ctx) {
     fog: {
       near: aerial.near,
       far: aerial.far,
-      color: aerial.color,
+      /** What the fog is actually set to: the sky at the view azimuth. */
+      color: round4v(state.fogRgb),
+      colorLuminance: round4(luminanceOf(state.fogRgb)),
+      /** The ceiling it is clamped against: the model's measured skyline. */
+      skyCeiling: round4v(model.horizonRadiance),
+      skyCeilingLuminance: round4(model.horizonLuminance),
+      /** The averaged, sun-biased term this pass no longer hands to the fog. */
+      moduleColor: aerial.color,
+      moduleColorLuminance: aerial.colorLuminance,
       rendererRule: aerial.rendererRule,
       scale: aerial.scale,
-      haze: aerial.haze,
+      haze: {
+        ...aerial.haze,
+        color: round4v(state.hazeRgb),
+        moduleColor: aerial.haze.color,
+      },
+      note: 'fog colour is skyDomeRadiance sampled at the view azimuth and +2 deg, '
+        + 'luminance-clamped to the model\'s own horizonLuminance and then per-channel '
+        + 'clamped to horizonRadiance; near/far are still the module\'s map-span grade',
     },
     clouds: {
       coverage: cloud.coverage,
-      layers: cloud.layers.map((layer) => ({
+      layers: cloud.layers.map((layer, index) => ({
         name: layer.name,
         opacity: layer.opacity,
         driftU: layer.driftU,
         driftV: layer.driftV,
+        textureSize: clouds.layers[index]?.stats?.size ?? null,
+        metresPerTexel: clouds.layers[index]?.metresPerTexel ?? null,
+        altitude: clouds.layers[index]?.altitude ?? null,
+        detail: clouds.layers[index]?.stats ?? null,
       })),
       textureSize: CLOUD_TEXTURE_SIZE,
+      highTextureSize: Math.round(CLOUD_TEXTURE_SIZE * CLOUD_HIGH_SCALE),
+      detailOctaves: CLOUD_DETAIL_OCTAVES,
+      note: 'each deck is a base fBm sheet with a sheared, 2:1 stretched second octave '
+        + 'composited over it; the composite holds the base sheet\'s coverage-weighted '
+        + 'mean shade so only the structure changes, not the deck\'s brightness',
     },
     datum: {
       roadLift: datum.roadLift,
@@ -1807,9 +2644,36 @@ function buildPass(ctx) {
       vehicles: underObject?.vehicles ?? 0,
       canopies: underObject?.canopies ?? 0,
       screenSpaceAvailable: false,
-      note: 'geometry-baked contact darkening: there is no post-processing stage on the '
-        + 'canonical path, and adding one would mean a render target and a shader this pass '
-        + 'may not introduce',
+      /** Metres. Read off `contactShadowLeakMetres()`, not chosen. */
+      width: CONTACT_WIDTH,
+      mitreClamp: CONTACT_MITRE_CLAMP,
+      alpha: CONTACT_ALPHA,
+      /** 0..1: how much sky there is for this AO term to occlude, right now. */
+      aoScale: state.aoScale,
+      sunIndependent: true,
+      note: 'ambient occlusion, not shadow: a crevice line exactly as wide as the shadow '
+        + "map's own measured contact leak, scaled by the sky illuminance it occludes, so "
+        + 'it is a hairline at night instead of a wedge',
+    },
+    grounding: {
+      version: 'shadow-grounding-v1',
+      capacity: MAX_GROUNDING_ANCHORS,
+      anchors: grounding.anchors.length,
+      quads: grounding.quads,
+      collects: grounding.collects,
+      audit: grounding.audit,
+      keyShare: grounding.keyShare ?? 0,
+      opacity: grounding.material.opacity,
+      active: Boolean(grounding.frame?.active),
+      reason: grounding.frame?.reason ?? null,
+      direction: grounding.frame?.active
+        ? { x: grounding.frame.dirX, z: grounding.frame.dirZ }
+        : null,
+      lift: GROUNDING_LIFT,
+      defaults: GROUNDING_DEFAULTS,
+      note: 'projected contact shadows for the casters the shadow map refused as sub-texel. '
+        + 'Opacity is the key share of scene illuminance, so the element is gone whenever '
+        + 'the sun is',
     },
     wet: {
       wetness: wetAsphalt.wetness,
@@ -1888,12 +2752,35 @@ export default {
       }
     }
 
+    // Grounding runs every frame, not on the hour bucket: half its anchors are
+    // walking or driving, and a projected contact that stays where its owner
+    // used to be is worse than none at all. The cost is one matrix apply and
+    // twelve float writes per anchor, and it early-outs entirely when the sun
+    // is down.
+    state.frames += 1;
+    if (state.grounding && GROUNDING_COLLECT_FRAMES.includes(state.frames)) {
+      collectGrounding(state, ctx);
+    }
+    if (state.grounding?.anchors.length) {
+      retimeGrounding(state, state.model, state.balance);
+    }
+
     // Re-assert the fog every frame. `setTimeOfDay` writes `scene.fog.color`
     // from its own palette whenever the clock moves, and it runs before the
     // pass runtime in the same frame, so a value written only on a bucket
     // change would be overwritten within one tick.
+    //
+    // The colour is re-derived here rather than merely re-copied, because
+    // aerial perspective is view-dependent: the sky the far field converges on
+    // is the sky at the azimuth the camera is pointing down, which on the
+    // canonical 15:00 clear model runs from luminance 0.826 anti-solar to the
+    // 1.240 ceiling. Cost is one `skyDomeRadiance` per frame - a handful of
+    // exp() on a cached Preetham state, measured below in the verifier's
+    // per-frame update timing - and it is a pure function of the pose, so a
+    // pinned capture still reproduces exactly.
     const fog = state.scene?.fog;
     if (fog) {
+      applyFogColor(state, camera);
       fog.near = state.fogNear;
       fog.far = state.fogFar;
       fog.color.copy(state.fogColor);
@@ -1917,14 +2804,19 @@ export default {
     const cloud = cloudProfile(model);
     const practical = nightPracticalProfile(model);
     state.weather = weather;
+    state.model = model;
     state.fogNear = aerial.near;
     state.fogFar = aerial.far;
-    setLinear(state.fogColor, aerial.color);
-    retimeSky(state.sky, model, aerial, cloud, recommendedExposure(model).exposure);
+    retimeSky(state.sky, model, cloud, recommendedExposure(model).exposure);
     retimeClouds(state.clouds, cloud);
-    retimeAerial(state, aerial);
-    retimePracticals(state, practical, recommendedExposure(model).exposure);
+    retimeAerial(state, aerial, camera);
+    const exposure = recommendedExposure(model);
+    state.illuminance = exposure.illuminance;
+    state.balance = keyFillBalance(model);
+    retimePracticals(state, practical, exposure.exposure);
     retimeWet(state, wetSurfaceGrade('asphalt', model));
+    retimeContactAO(state, exposure.illuminance);
+    retimeGrounding(state, model, state.balance);
   },
 
   dispose() {
@@ -1951,8 +2843,12 @@ export default {
       state.underObject?.texture,
       ...(state.practicals?.textures || []),
       state.wet?.texture,
+      state.grounding?.texture,
     ];
     for (const texture of textures) texture?.dispose?.();
+    // The grounding anchors hold references to other passes' meshes. Dropping
+    // them here is the difference between a disposed world and a retained one.
+    if (state.grounding) state.grounding.anchors = [];
   },
 
   /** Exposed for the headless verifier; never called by the runtime. */

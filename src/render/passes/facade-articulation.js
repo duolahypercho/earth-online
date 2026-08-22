@@ -25,6 +25,43 @@
 // returns, a frame ring, a pane set back behind the frame, mullion and transom
 // bars, a projecting sill and a drip recess cut under it.
 //
+// ---------------------------------------------------------------------------
+// What wave D added, and where the construction now runs out
+// ---------------------------------------------------------------------------
+//
+// The round 4 finding was measured on frames in which the hero building was
+// never clad at all -- 139 buildings, 64% of the frame's screen coverage, were
+// pinned to the silhouette rung by a bad authored-elevation test, and the 115 m
+// building filling the whole card emitted 84 triangles. With that fixed, the
+// near tier builds 44,844 triangles on that same building. Three members from
+// the reviewers' list were still genuinely absent from every elevation, and
+// this wave adds them:
+//
+//   base course     A two-part member -- bed mould, then a corona oversailing
+//                   it by 0.08 m -- landing with its head on the ground
+//                   storey's ceiling line, continuous round every near/mid
+//                   elevation whether or not that face carries a shopfront.
+//                   Until now an elevation had exactly two continuous
+//                   horizontals: the plinth at the pavement and the cornice at
+//                   the roofline. On a thirty-six storey building that is one
+//                   line at 0.4 m and the next at 99 m.
+//   coping throat   A groove cut under every near-ring coping, so a parapet
+//                   reads as a capped wall with thickness rather than a plate
+//                   with a painted edge.
+//   roof plant      Overruns, housings, tanks, ducts, masts and vents standing
+//                   on the roof deck. The one item on the list this module had
+//                   no answer to at all: every elevation terminated in a coping
+//                   and above that line the building simply stopped.
+//
+// STILL NOT BUILT, and priced rather than guessed, so the next wave can decide
+// it: a recessed spandrel panel between a window head and the sill above it.
+// Per bay per storey that is 10 triangles plus the pier fills -- about +72
+// triangles per glazed storey row, ~6,700 on the hero elevation alone and an
+// estimated +20,000 to +43,000 across the scene depending on whether the
+// spandrels are cut per bay or on the bay sequence. There are 16,566 triangles
+// of scene ceiling left at the worst sampled street eye, so it does not fit
+// without a measured raise of `sceneTriangleBudget`.
+//
 // The whole build-up sits OUTSIDE the shell wall, which is the only
 // arrangement that works: the shell is opaque and is still drawn, so an
 // opening cut inward shows the shell's painted texture at the bottom of the
@@ -48,6 +85,12 @@
 //   far    <= 420 m   <= 300 buildings   base  820 tri/building
 //   beyond            <= 900 buildings   base   48 tri/building
 //
+// Rooftop plant is deliberately NOT charged to that per-building cap: the cap
+// is what the detail ladder trades against, and a ladder that could buy a
+// window by deleting the roof would be trading the wrong things. It is charged
+// to the SCENE budget and bounded separately by FACADE_ROOF_PLANT, and the
+// pass republishes both bounds as `diagnostics.roofPlant`.
+//
 // The radius is measured to the NEAREST POINT OF THE FOOTPRINT. The centroid
 // is the wrong question and round 2 shipped it: an eleven storey frontage 61 m
 // from the eye, filling most of one capture card, had its centroid at 87 m and
@@ -61,12 +104,15 @@
 // from the eye or three hundred, which buys four glazed storeys and forty-six
 // flat glazing bands: the uniform grid round 2 was rejected for.
 //
-// Scene ceiling is 330,000 triangles and 48 draw calls. It is held by giving
-// up the coverage bonus first -- that takes triangles off the two or three
-// buildings holding the most of them and leaves the rest of the city alone --
-// and only then by uniform outside-in ring demotion. Measured on the real 700
-// building slice from the street capture pose: 317,378 triangles, 20 draw
-// calls, 0 coverage cuts, 0 demotions, 700/700 buildings articulated.
+// Scene ceiling is FACADE_ARTICULATION_BUDGET.sceneTriangleBudget triangles and
+// 48 draw calls. It is held by giving up the coverage bonus first -- that takes
+// triangles off the two or three buildings holding the most of them and leaves
+// the rest of the city alone -- and only then by uniform outside-in ring
+// demotion. Measured on the real 700 building slice after this wave: 323,746
+// triangles and 21 draw calls at the street capture pose, 363,434 triangles and
+// 22 draw calls at the worst of 48 sampled street eyes, 0 coverage cuts, 0
+// demotions, 700/700 buildings articulated. The ceiling is 380,000 and was NOT
+// moved by this wave; see the restatement on FACADE_ARTICULATION_BUDGET.
 //
 // Captures run through a software GL backend, so the pass also renders before
 // the shell (`renderOrder = -1`): the cladding wins the depth test first and
@@ -98,6 +144,7 @@ import {
   FACADE_INTERIOR_MATERIAL,
   FACADE_MATERIAL_CLASSES,
   FACADE_FRAME_MATERIAL,
+  FACADE_ROOF_PLANT,
   buildFacadeArticulationBatch,
   disposeFacadeArticulation,
   facadeFootprintMetrics,
@@ -127,6 +174,7 @@ const state = {
   buildings: [],
   baseYFor: null,
   preserveIds: new Set(),
+  preserveSurvey: null,
   hiddenLegacy: [],
   refreshes: 0,
   lastRefreshMs: 0,
@@ -188,6 +236,15 @@ function emptyDiagnostics(reason) {
     bandedStoreys: 0,
     glazedStoreyShare: 0,
     maxCoverage: 0,
+    roofPlant: {
+      triangles: 0,
+      elements: 0,
+      buildings: 0,
+      worstRise: 0,
+      maxRise: FACADE_ROOF_PLANT.maxRise,
+      triangleAllowance: FACADE_ROOF_PLANT.triangleAllowance,
+      withinAllowance: true,
+    },
     budget: {
       sceneTriangleBudget: FACADE_ARTICULATION_BUDGET.sceneTriangleBudget,
       maxDrawCalls: FACADE_ARTICULATION_BUDGET.maxDrawCalls,
@@ -318,6 +375,31 @@ function disposeZone(zone) {
   }
 }
 
+/**
+ * This zone's share of the scene triangle budget.
+ *
+ * The two zones are built by separate calls, and each call enforces the budget
+ * it is handed. Handing both of them the whole scene budget -- which is what
+ * happened until wave C -- bounds neither the sum nor anything else: measured
+ * on the real slice at the round 4 capture centre the pair came to 350,536
+ * triangles against a 330,000 "ceiling", with zero coverage cuts and zero
+ * demotions recorded, because neither call had any reason to cut.
+ *
+ * The detail zone (near + mid) takes first claim, and takes it from a STATIC
+ * number so its rung assignment does not move when the background happens to
+ * be busy -- a facade that changes rung because a block three hundred metres
+ * away came into range is a pop. The bulk zone takes what is left, floored at
+ * the background's guaranteed share. Detail is always built or refreshed with
+ * the other zone's batch already in `state`, so the arithmetic is exact.
+ */
+function zoneTriangleBudget(zone) {
+  const scene = FACADE_ARTICULATION_BUDGET.sceneTriangleBudget;
+  const floor = FACADE_ARTICULATION_BUDGET.bulkTriangleFloor;
+  if (zone === 'detail') return Math.max(0, scene - floor);
+  const detail = state.zoneBatches.get('detail');
+  return Math.max(floor, scene - (detail ? detail.triangles : 0));
+}
+
 /** Build (or rebuild) one zone's merged meshes around `centre`. */
 function buildZone(zone, centre) {
   const startedAt = Date.now();
@@ -326,6 +408,7 @@ function buildZone(zone, centre) {
     zone,
     baseYFor: state.baseYFor,
     preserveIds: state.preserveIds,
+    sceneTriangleBudget: zoneTriangleBudget(zone),
   });
   disposeZone(zone);
   let group = state.zoneGroups.get(zone);
@@ -368,20 +451,77 @@ function buildZone(zone, centre) {
 }
 
 /**
- * Buildings whose elevation is authored somewhere else. The renderer merges a
- * hand-made facade atlas onto a handful of hero frontages and publishes their
- * ids on the merged mesh; cladding procedural windows over a hand-authored
- * photographic facade would be a straight downgrade, so those keep their
- * surface and take the silhouette rung's roofline only.
+ * Buildings whose elevation is authored somewhere else.
+ *
+ * Preserving a frontage means it is forced to the silhouette rung: no
+ * cladding, no openings, no reveals, only a cornice and a plinth over the
+ * shell's tiled wallpaper. That is the right answer for a hand-authored
+ * elevation and a catastrophe for anything else, so the test for "authored"
+ * has to be exact.
+ *
+ * Round 4 it was not. This read every id off every `buildings-hero-textured`
+ * mesh, but the renderer puts a building on that mesh whenever its facade and
+ * material land on one of six SHARED atlas cells -- a procedural fill, not an
+ * authored elevation. Measured on the 700 building slice that is 139
+ * candidates, and at the round 4 capture eye they held 64.2% of the frame's
+ * screen coverage, including the 115 m building 6.4 m from the camera that
+ * fills the whole hero card. All five reviewers described exactly that: "the
+ * nearest and largest surface ... an articulation-free smear with no windows,
+ * mullions or reveals at all". The near tier was not failing to build depth;
+ * it was being told not to build any.
+ *
+ * Two tests, in order:
+ *
+ *  1. `userData.authoredBuildingIds` -- the explicit contract. If the renderer
+ *     names its authored frontages, that answer is used and nothing else is.
+ *     THIS IS THE FIX THE RENDERER OWNER SHOULD LAND; everything below is a
+ *     bridge until it does.
+ *  2. `userData.patternKeys` -- the atlas cells the merged group draws from.
+ *     An authored frontage owns its cell. A group carrying more buildings than
+ *     cells is sharing them, which is a procedural fill by definition, and
+ *     none of its ids are preserved.
+ *
+ * A group that declares neither keeps the old behaviour, which is the
+ * conservative direction: it preserves an authored surface it cannot identify
+ * rather than cladding over one.
  */
 function authoredElevations(root) {
   const ids = new Set();
-  if (!root?.traverse) return ids;
+  const survey = { groups: 0, candidates: 0, declared: 0, inferredAuthored: 0, sharedAtlasSkipped: 0, source: 'none' };
+  if (!root?.traverse) return { ids, survey };
   root.traverse((object) => {
     if (object.userData?.kind !== 'buildings-hero-textured') return;
-    for (const id of object.userData.buildingIds || []) ids.add(id);
+    const buildingIds = Array.isArray(object.userData.buildingIds) ? object.userData.buildingIds : [];
+    survey.groups += 1;
+    survey.candidates += buildingIds.length;
+
+    // 1. The declared contract. If the renderer names its authored frontages,
+    //    that answer is authoritative and nothing else is consulted.
+    const declared = Array.isArray(object.userData.authoredBuildingIds)
+      ? object.userData.authoredBuildingIds
+      : null;
+    if (declared) {
+      for (const id of declared) ids.add(id);
+      survey.declared += declared.length;
+      survey.source = survey.source === 'inferred' ? 'mixed' : 'declared';
+      return;
+    }
+
+    // 2. The atlas-cell test. `patternKeys` is the set of atlas cells this
+    //    merged group draws from. A hand-authored frontage owns its cell; a
+    //    procedurally atlassed one shares a handful of cells across many
+    //    buildings, and a group carrying more buildings than cells is
+    //    therefore a procedural fill whatever its mesh is called.
+    const patternKeys = Array.isArray(object.userData.patternKeys) ? object.userData.patternKeys : null;
+    if (patternKeys && buildingIds.length > patternKeys.length) {
+      survey.sharedAtlasSkipped += buildingIds.length;
+      return;
+    }
+    for (const id of buildingIds) ids.add(id);
+    survey.inferredAuthored += buildingIds.length;
+    if (buildingIds.length) survey.source = survey.source === 'declared' ? 'mixed' : 'inferred';
   });
-  return ids;
+  return { ids, survey };
 }
 
 /**
@@ -437,6 +577,7 @@ function collectDiagnostics(centre, centreSource) {
   let glazedStoreys = 0;
   let bandedStoreys = 0;
   let maxCoverage = 0;
+  const roofPlant = { triangles: 0, elements: 0, worstRise: 0, buildings: 0 };
   for (const batch of batches) {
     triangles += batch.triangles;
     drawCalls += batch.drawCalls;
@@ -460,14 +601,24 @@ function collectDiagnostics(centre, centreSource) {
     for (const [name, count] of Object.entries(batch.features)) features[name] = (features[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.parts)) parts[name] = (parts[name] || 0) + count;
     for (const [name, count] of Object.entries(batch.classes)) classes[name] = (classes[name] || 0) + count;
+    if (batch.roofPlant) {
+      roofPlant.triangles += batch.roofPlant.triangles;
+      roofPlant.elements += batch.roofPlant.elements;
+      roofPlant.worstRise = Math.max(roofPlant.worstRise, batch.roofPlant.worstRise);
+    }
     for (const record of batch.buildings) {
       signatures.add(record.signature);
+      if (record.roofElements > 0) roofPlant.buildings += 1;
       glazedStoreys += record.glazedStoreys || 0;
       bandedStoreys += record.bandedStoreys || 0;
       maxCoverage = Math.max(maxCoverage, record.coverage || 0);
     }
   }
   const budget = FACADE_ARTICULATION_BUDGET;
+  const zoneTriangles = {
+    detail: detail ? detail.triangles : 0,
+    bulk: bulk ? bulk.triangles : 0,
+  };
   return {
     version: FACADE_ARTICULATION_VERSION,
     implemented: true,
@@ -489,6 +640,18 @@ function collectDiagnostics(centre, centreSource) {
       ? glazedStoreys / (glazedStoreys + bandedStoreys)
       : 0,
     maxCoverage,
+    // Rooftop plant, measured rather than asserted. `worstRise` is the highest
+    // any element reaches above its own shell top -- the one bound the
+    // cladding invariant ("nothing rises above the shell top", measured over
+    // the elevation quads) deliberately does not cover, because standing above
+    // that line is what roof plant is for. See FACADE_ROOF_PLANT.
+    roofPlant: {
+      ...roofPlant,
+      maxRise: FACADE_ROOF_PLANT.maxRise,
+      triangleAllowance: FACADE_ROOF_PLANT.triangleAllowance,
+      withinAllowance: roofPlant.triangles <= FACADE_ROOF_PLANT.triangleAllowance
+        && roofPlant.worstRise <= FACADE_ROOF_PLANT.maxRise + 1e-6,
+    },
     rings,
     features,
     parts,
@@ -498,6 +661,10 @@ function collectDiagnostics(centre, centreSource) {
     partyEdges,
     preservedAuthored,
     authoredElevations: state.preserveIds.size,
+    // How that number was reached. `candidates` is every id published on a
+    // `buildings-hero-textured` mesh; `sharedAtlasSkipped` is the ones that
+    // turned out to be a procedural atlas fill and are now clad normally.
+    preserve: state.preserveSurvey || { groups: 0, candidates: 0, declared: 0, inferredAuthored: 0, sharedAtlasSkipped: 0, source: 'none' },
     signatures: {
       total: articulated,
       unique: signatures.size,
@@ -507,6 +674,13 @@ function collectDiagnostics(centre, centreSource) {
     },
     budget: {
       sceneTriangleBudget: budget.sceneTriangleBudget,
+      bulkTriangleFloor: budget.bulkTriangleFloor,
+      // What each zone was actually allowed, and what it spent. The sum is
+      // bounded by `sceneTriangleBudget` by construction; these are here so a
+      // reader can see WHICH zone is close to its share rather than only that
+      // the total fits.
+      zoneBudgets: { detail: Math.max(0, budget.sceneTriangleBudget - budget.bulkTriangleFloor), bulk: zoneTriangles.bulk ? Math.max(budget.bulkTriangleFloor, budget.sceneTriangleBudget - zoneTriangles.detail) : 0 },
+      zoneTriangles,
       maxDrawCalls: budget.maxDrawCalls,
       withinBudget: triangles <= budget.sceneTriangleBudget && drawCalls <= budget.maxDrawCalls,
       demotions,
@@ -536,6 +710,7 @@ function teardown() {
   state.buildings = [];
   state.baseYFor = null;
   state.preserveIds = new Set();
+  state.preserveSurvey = null;
   state.refreshes = 0;
   state.lastRefreshMs = 0;
   state.group = null;
@@ -578,7 +753,9 @@ export default {
       return value;
     };
 
-    state.preserveIds = authoredElevations(ctx?.root);
+    const authored = authoredElevations(ctx?.root);
+    state.preserveIds = authored.ids;
+    state.preserveSurvey = authored.survey;
     state.nightLevel = -1;
 
     // Create every material now, before the renderer walks the scene to cache

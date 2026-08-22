@@ -1038,6 +1038,314 @@ export function contactShadowLeakMetres(options = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Grounding: what to draw for the casters this map cannot resolve
+// ---------------------------------------------------------------------------
+//
+// The thickness gate above is right about the physics and wrong about the
+// frame. On the round-3 street card, 165 of 340 candidate meshes were excluded
+// as sub-texel, and the measured consequence is that a lamp column, a hydrant,
+// a street tree, a parked car and every pedestrian put nothing at all on the
+// ground: `measure-frame-v1 --ratio` over the near footway of that card
+// classified 217758 pixels as reached by the key and **3** as shadowed. A city
+// where nothing small touches the ground fails the character-grounding and
+// technical-integrity dimensions no matter how correct the exclusion is.
+//
+// The answer is not to re-admit them to the shadow map - the bias argument at
+// the top of this file has not changed. It is to draw the one thing the map
+// was going to draw anyway, directly: the object's own silhouette projected
+// onto the ground along the sun ray.
+//
+// Three properties make that legitimate rather than another painted decal, and
+// all three are asserted by `scripts/verify/verify-shadow-casters.mjs`:
+//
+//   1. **It points where the sun says.** The quad's long axis is the
+//      anti-solar horizontal direction, taken from the sky model's own sun
+//      vector, so it swings through the day and is never authored.
+//   2. **It is as long as the geometry says.** `length = height / tan(alt)`,
+//      the elementary projection, clamped only where the projection diverges
+//      near the horizon.
+//   3. **It vanishes with the key.** Its opacity is the *key share* of scene
+//      illuminance, `key / (key + sky)`. Under linear-space compositing a
+//      black quad at alpha `a` scales the receiver's radiance by `1 - a`, so
+//      alpha = keyShare leaves exactly the fill behind - which is the
+//      definition of a shadow, and is what the key-off capture measures. When
+//      the sun sets, `key -> 0`, alpha -> 0, and the element is gone. It
+//      cannot leave a wedge on a pavement at 21:30, because at 21:30 there is
+//      no key to remove.
+//
+// Property 3 is also why this is NOT ambient occlusion and must not be reused
+// as such: AO removes *sky*, this removes *sun*, and the two have opposite
+// day/night behaviour.
+
+const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Angular radius of the solar disc as seen from the ground, in degrees.
+ * 0.266 deg is the mean of the annual 0.262-0.271 range; the eccentricity
+ * swing is four significant figures below anything a penumbra width can show.
+ */
+export const SUN_ANGULAR_RADIUS_DEG = 0.266;
+
+/** tan of the above: metres of penumbra per metre of throw, per side. */
+export const PENUMBRA_PER_METRE = Math.tan(SUN_ANGULAR_RADIUS_DEG * DEG_TO_RAD);
+
+export const GROUNDING_DEFAULTS = Object.freeze({
+  /**
+   * Longest projection drawn, in metres. `h / tan(alt)` diverges as the sun
+   * reaches the horizon: a 4 m lamp column at 5 deg throws 45 m, at 2 deg
+   * 115 m, and neither is a shape a flat quad can honestly represent once the
+   * ground stops being flat. 26 m is a little over one carriageway plus both
+   * footways on the widest street in the contract (30 m), so a shadow that is
+   * clamped has already crossed the street the object stands on.
+   */
+  maxLengthMetres: 26,
+  /**
+   * Below this solar altitude the projection is not drawn at all. At 4 deg a
+   * 1.8 m pedestrian already throws 25.7 m, the clamp is doing all the work,
+   * and the true shadow is a diffuse smear whose penumbra (0.24 m at that
+   * length) is wider than the person. Fading out here also means the element
+   * is already gone before the sun crosses the horizon, so nothing has to be
+   * special-cased at sunset.
+   */
+  minAltitudeDeg: 4,
+  /** Full fade-in band above `minAltitudeDeg`, in degrees. */
+  altitudeFadeDeg: 3,
+  /**
+   * Largest object span that gets a projected contact. Above this the mesh is
+   * structural, the map resolves it, and a flat quad would be wrong anyway.
+   */
+  maxSpanMetres: 12,
+  /**
+   * Tallest object that gets a projected contact, in metres.
+   *
+   * There was no height ceiling here, and `maxLengthMetres` was left to absorb
+   * the consequence. It cannot: the clamp does not shorten a tall object's
+   * shadow, it truncates it, and what a truncated projection draws is a
+   * `maxLengthMetres`-long quad at full alpha with a hard straight end - a
+   * slab, not a shadow. The round-4 wet-street card shows one: a uniformly
+   * darkened band on the footway, ~1.2 m wide and 25-30 m long, running along
+   * the anti-solar azimuth to within 5 deg, present at identical pixels with
+   * the key light off (so it is drawn geometry, not a shadow-map artifact) and
+   * darkening whatever it crosses by the same 0.58 factor in both frames. A
+   * 26 m throw at that card's 43.9 deg sun requires a ~25 m tall anchor.
+   *
+   * 12 m is above every street prop this city builds - a lamp column is ~9 m,
+   * a signal mast ~7 m, a street tree ~8 m - and below anything that reads as
+   * architecture. Above it the object is exactly what the shadow map's
+   * structural exemption is for, and with the cascade rig the near cascade
+   * resolves it at 3.8 cm.
+   */
+  maxHeightMetres: 12,
+  /** Shortest object that gets one. Under 25 cm the projection is a smudge. */
+  minHeightMetres: 0.25,
+  /**
+   * Cap on how much the penumbra is allowed to widen the tip, as a multiple of
+   * the base width. Without it a 0.09 m sign post at 26 m throw would end in a
+   * 0.24 m penumbra, i.e. a triangle 2.7x wider at the tip than at the foot,
+   * which reads as a searchlight beam rather than as a shadow.
+   */
+  maxTipWidthRatio: 2.2,
+});
+
+/**
+ * Project one object's ground contact along the sun ray.
+ *
+ * **Pure.** No three, no scene, no clock. Same inputs -> same numbers.
+ *
+ * @param {object} object
+ * @param {number} object.height Metres from the ground to the object's top.
+ * @param {number} object.radius Horizontal radius of the object at its base,
+ *   in metres (half the larger footprint dimension).
+ * @param {object} sun
+ * @param {number} sun.altitudeDeg Solar altitude. Below the horizon means no
+ *   projection at all.
+ * @param {number} sun.x Horizontal component of the unit vector TOWARDS the
+ *   sun, in world X. Taken straight from `computeSkyModel().sun`.
+ * @param {number} sun.z Same, in world Z.
+ * @param {number} keyShare Fraction of the receiver's illuminance that comes
+ *   from the sun, `key / (key + sky)`. This becomes the alpha.
+ * @param {object} [options] See `GROUNDING_DEFAULTS`.
+ * @returns {Readonly<object>} `{ grounded, reason, length, baseWidth,
+ *   tipWidth, dirX, dirZ, opacity, penumbra, clamped }`
+ */
+export function groundingFrame(sun = {}, keyShare = 0, options = {}) {
+  const opts = { ...GROUNDING_DEFAULTS, ...options };
+  const altitude = Number(sun.altitudeDeg);
+  const share = Number(keyShare);
+  const off = (reason) => Object.freeze({
+    active: false, reason, dirX: 0, dirZ: 0, cot: 0, opacity: 0,
+    altitudeDeg: isFiniteNumber(altitude) ? altitude : NaN,
+    maxLengthMetres: opts.maxLengthMetres,
+    maxSpanMetres: opts.maxSpanMetres,
+    minHeightMetres: opts.minHeightMetres,
+    maxTipWidthRatio: opts.maxTipWidthRatio,
+  });
+
+  if (!isFiniteNumber(altitude)) return off('sun altitude is not a number');
+  if (!isFiniteNumber(share) || share <= 0) return off('the key delivers nothing here');
+  if (altitude <= opts.minAltitudeDeg) {
+    return off(`sun at ${round(altitude, 2)} deg, at or under the `
+      + `${opts.minAltitudeDeg} deg floor: the projection diverges and its penumbra `
+      + 'is wider than the object');
+  }
+  const horizontal = Math.hypot(sun.x, sun.z);
+  if (!(horizontal > 1e-6)) {
+    return off('sun is at the zenith: there is no horizontal shadow direction');
+  }
+
+  // Fade in over the first few degrees so nothing pops into existence at
+  // exactly `minAltitudeDeg`.
+  const fade = clamp01((altitude - opts.minAltitudeDeg) / Math.max(1e-6, opts.altitudeFadeDeg));
+  return Object.freeze({
+    active: true,
+    reason: `sun at ${round(altitude, 2)} deg delivering ${round(clamp01(share) * 100, 1)}% of the ground illuminance`,
+    /** Horizontal direction the shadow runs: away from the sun. */
+    dirX: -sun.x / horizontal,
+    dirZ: -sun.z / horizontal,
+    /** Metres of throw per metre of object height. */
+    cot: 1 / Math.tan(altitude * DEG_TO_RAD),
+    /**
+     * Alpha. Under linear compositing a black quad at this alpha leaves the
+     * receiver at exactly its fill-only radiance, which is what a shadow is.
+     */
+    opacity: clamp01(share) * fade,
+    altitudeDeg: altitude,
+    fade,
+    maxLengthMetres: opts.maxLengthMetres,
+    maxSpanMetres: opts.maxSpanMetres,
+    minHeightMetres: opts.minHeightMetres,
+    maxTipWidthRatio: opts.maxTipWidthRatio,
+  });
+}
+
+/**
+ * Throw length for one object under a frame, in metres, clamped.
+ * @param {object} frame From `groundingFrame`.
+ * @param {number} height Object height in metres.
+ */
+export function groundingLength(frame, height) {
+  if (!frame?.active || !isFiniteNumber(height) || height <= 0) return 0;
+  return Math.min(height * frame.cot, frame.maxLengthMetres);
+}
+
+/**
+ * Width of the quad at its far end, in metres: the base width plus the
+ * penumbra the solar disc opens over the throw, capped so a thin post cannot
+ * end in a triangle that reads as a searchlight beam.
+ * @param {object} frame From `groundingFrame`.
+ * @param {number} baseWidth Object width at the ground, in metres.
+ * @param {number} length Throw length from `groundingLength`.
+ */
+export function groundingTipWidth(frame, baseWidth, length) {
+  if (!frame?.active) return 0;
+  return Math.min(baseWidth + PENUMBRA_PER_METRE * length * 2, baseWidth * frame.maxTipWidthRatio);
+}
+
+export function projectedContactShadow(object = {}, sun = {}, keyShare = 0, options = {}) {
+  const opts = { ...GROUNDING_DEFAULTS, ...options };
+  const height = Number(object.height);
+  const radius = Number(object.radius);
+  const none = (reason) => Object.freeze({
+    grounded: false, reason,
+    length: 0, baseWidth: 0, tipWidth: 0, dirX: 0, dirZ: 0,
+    opacity: 0, penumbra: 0, clamped: false,
+  });
+
+  if (!isFiniteNumber(height) || height <= 0) return none('height is not a positive number');
+  if (!isFiniteNumber(radius) || radius <= 0) return none('radius is not a positive number');
+  if (height < opts.minHeightMetres) {
+    return none(`${round(height, 3)} m tall, under the ${opts.minHeightMetres} m floor`);
+  }
+  if (radius * 2 > opts.maxSpanMetres) {
+    return none(`${round(radius * 2, 2)} m across, over the ${opts.maxSpanMetres} m `
+      + 'structural span: the shadow map resolves this one');
+  }
+
+  const frame = groundingFrame(sun, keyShare, opts);
+  if (!frame.active) return none(frame.reason);
+  const { dirX, dirZ } = frame;
+  const altitude = frame.altitudeDeg;
+
+  const ideal = height * frame.cot;
+  const length = groundingLength(frame, height);
+  const clamped = ideal > opts.maxLengthMetres;
+
+  // Penumbra: the solar disc is 0.532 deg wide, so the shadow's edge softens
+  // by `PENUMBRA_PER_METRE` per metre of throw, per side. Measured along the
+  // ground the throw is `length`, so the tip is this much wider than the foot.
+  const penumbra = PENUMBRA_PER_METRE * length;
+  const baseWidth = radius * 2;
+  const tipWidth = groundingTipWidth(frame, baseWidth, length);
+  const opacity = frame.opacity;
+
+  return Object.freeze({
+    grounded: opacity > 0,
+    reason: `projected ${round(length, 2)} m along ${round(Math.atan2(dirZ, dirX) / DEG_TO_RAD, 1)} deg `
+      + `from a ${round(height, 2)} m object at ${round(altitude, 2)} deg sun`
+      + (clamped ? `, clamped from ${round(ideal, 1)} m` : ''),
+    length: round(length, 4),
+    baseWidth: round(baseWidth, 4),
+    tipWidth: round(tipWidth, 4),
+    dirX: round(dirX, 6),
+    dirZ: round(dirZ, 6),
+    opacity: round(opacity, 5),
+    penumbra: round(penumbra, 4),
+    clamped,
+  });
+}
+
+/**
+ * Alpha for a delivered key/fill ratio.
+ *
+ * This, not the physical illuminance split, is the number
+ * `projectedContactShadow` should be handed at runtime. The rig does not
+ * deliver the sky's full hemispherical irradiance as fill - `keyFillBalance`
+ * corrects the ratio deliberately - so what a shadow has to remove is the
+ * *delivered* key, and `keyFillBalance(model).achieved.ratio` is exactly that
+ * number. Using it here is what makes a drawn contact shadow the same darkness
+ * as the shadow map's own, so a lamp column's shadow and the building's read
+ * as one lighting solution rather than two.
+ *
+ * With r = key/fill, the lit surface is key + fill and the shadowed one is
+ * fill, so the fraction removed is r / (1 + r). At 11:00 clear the model
+ * reports r = 3.9523, giving 0.7981; at 21:30 it reports r = 0, giving 0.
+ *
+ * @param {number} keyFillRatio Delivered key/fill.
+ * @returns {number} 0..1
+ */
+export function keyShareOfRatio(keyFillRatio) {
+  const ratio = Number(keyFillRatio);
+  if (!isFiniteNumber(ratio) || ratio <= 0) return 0;
+  return clamp01(ratio / (1 + ratio));
+}
+
+/**
+ * The share of a receiver's illuminance that the sun delivers, from a raw
+ * `{key, sky}` illuminance pair.
+ *
+ * Kept because it is the physical statement and it is what a caller with no
+ * rig in front of it should use; note that it is NOT the delivered share -
+ * see `keyShareOfRatio`, which is what the pass hands to the projection.
+ *
+ * @param {{key:number, sky:number, total?:number}} illuminance
+ * @returns {number} 0..1
+ */
+export function keyShareOfIlluminance(illuminance = {}) {
+  const key = Number(illuminance.key);
+  const sky = Number(illuminance.sky);
+  if (!isFiniteNumber(key) || key <= 0) return 0;
+  const total = isFiniteNumber(illuminance.total) && illuminance.total > 0
+    ? illuminance.total
+    : key + (isFiniteNumber(sky) ? sky : 0);
+  if (!(total > 0)) return 0;
+  return clamp01(key / total);
+}
+
+function clamp01(value) {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+// ---------------------------------------------------------------------------
 // Optional integration helpers
 // ---------------------------------------------------------------------------
 //
@@ -1188,4 +1496,187 @@ export function applyShadowCasterPolicy(root, options = {}) {
     audit.record(result, descriptor.name);
   });
   return audit;
+}
+
+// ---------------------------------------------------------------------------
+// Grounding anchors: finding the objects the map gave up on
+// ---------------------------------------------------------------------------
+
+const _groundBox = new THREE.Box3();
+const _groundSize = new THREE.Vector3();
+const _groundCentre = new THREE.Vector3();
+const _groundMatrix = new THREE.Matrix4();
+const _groundPoint = new THREE.Vector3();
+
+/**
+ * Walk a subtree and return one anchor per object that stands on the ground,
+ * is small enough for the shadow map to have refused it, and is therefore
+ * currently contributing nothing to the frame.
+ *
+ * The selection rule is deliberately the *complement* of the caster policy:
+ * anything with `castShadow === true` is left alone, because the map is
+ * already drawing it and two shadows under one object is worse than none.
+ *
+ * `InstancedMesh` is expanded per instance. That is the whole point - a batch
+ * is one `castShadow` flag standing in for hundreds of separate objects
+ * scattered across the city, and it is the instances, not the batch, that need
+ * to touch the ground.
+ *
+ * Each anchor keeps its source node and instance index, plus the object-space
+ * point it was measured at, so `refreshGroundingAnchor` can re-read a moving
+ * object's position every frame without re-running this traversal.
+ *
+ * @param {object} root Scene subtree (an `Object3D`).
+ * @param {object} [options]
+ * @param {number} [options.maxAnchors=1024] Hard cap on anchors returned.
+ * @param {number} [options.maxSpanMetres] See `GROUNDING_DEFAULTS`.
+ * @param {number} [options.minHeightMetres] See `GROUNDING_DEFAULTS`.
+ * @param {number} [options.maxHeightMetres] See `GROUNDING_DEFAULTS`.
+ * @param {(object) => boolean} [options.skip] Return true to ignore a subtree.
+ * @returns {{anchors: Array<object>, sources: number, scanned: number,
+ *   candidates: number, capped: boolean, skipped: object}}
+ */
+export function collectGroundingAnchors(root, options = {}) {
+  const {
+    maxAnchors = 1024,
+    maxSpanMetres = GROUNDING_DEFAULTS.maxSpanMetres,
+    minHeightMetres = GROUNDING_DEFAULTS.minHeightMetres,
+    maxHeightMetres = GROUNDING_DEFAULTS.maxHeightMetres,
+    skip = null,
+  } = options;
+  if (!root || typeof root.traverse !== 'function') {
+    throw new TypeError('shadow-casters: collectGroundingAnchors(root) needs an Object3D');
+  }
+  const skipped = {
+    casting: 0, role: 0, tooSmall: 0, tooBig: 0, tooTall: 0, degenerate: 0, hidden: 0, optedOut: 0,
+  };
+  /** @type {Array<Array<object>>} one list per source mesh, for round-robin. */
+  const perSource = [];
+  let scanned = 0;
+  let candidates = 0;
+
+  root.updateMatrixWorld(true);
+  root.traverse((object) => {
+    if (skip && skip(object) === true) return;
+    const batched = object.isInstancedMesh === true;
+    if (!object.isMesh && !batched) return;
+    scanned += 1;
+    if (object.visible === false) { skipped.hidden += 1; return; }
+    // The map already draws this one.
+    if (object.castShadow === true) { skipped.casting += 1; return; }
+    if (object.userData?.grounded === false) { skipped.optedOut += 1; return; }
+    const parents = [];
+    for (let node = object.parent; node && parents.length < 4; node = node.parent) {
+      if (node.name) parents.push(node.name);
+    }
+    const role = classifyShadowRole(object.name, parents);
+    if (role === SHADOW_ROLES.NON_OCCLUDER || role === SHADOW_ROLES.DECAL
+      || role === SHADOW_ROLES.TERRAIN) { skipped.role += 1; return; }
+
+    const geometry = object.geometry;
+    if (!geometry) { skipped.degenerate += 1; return; }
+    if (!geometry.boundingBox) geometry.computeBoundingBox();
+    const local = geometry.boundingBox;
+    if (!local || local.isEmpty()) { skipped.degenerate += 1; return; }
+
+    const list = [];
+    const count = batched ? Math.max(0, Number(object.count) || 0) : 1;
+    for (let i = 0; i < count; i += 1) {
+      if (batched) {
+        object.getMatrixAt(i, _groundMatrix);
+        _groundMatrix.premultiply(object.matrixWorld);
+      } else {
+        _groundMatrix.copy(object.matrixWorld);
+      }
+      _groundBox.copy(local).applyMatrix4(_groundMatrix);
+      _groundBox.getSize(_groundSize);
+      _groundBox.getCenter(_groundCentre);
+      const height = _groundSize.y;
+      const span = Math.max(_groundSize.x, _groundSize.z);
+      if (!Number.isFinite(height) || !Number.isFinite(span) || span <= 0) {
+        skipped.degenerate += 1;
+        continue;
+      }
+      if (height < minHeightMetres) { skipped.tooSmall += 1; continue; }
+      if (span > maxSpanMetres) { skipped.tooBig += 1; continue; }
+      // A projection this tall would be clamped to `maxLengthMetres` at every
+      // sun altitude the frame ever sees, and a clamped projection is a slab.
+      // See `GROUNDING_DEFAULTS.maxHeightMetres`.
+      if (height > maxHeightMetres) { skipped.tooTall += 1; continue; }
+      candidates += 1;
+      // The object-space point that maps to the world footprint centre. Stored
+      // so a moving object can be re-read with one matrix apply per frame
+      // instead of a fresh Box3 transform.
+      _groundPoint.set(_groundCentre.x, _groundBox.min.y, _groundCentre.z)
+        .applyMatrix4(_groundMatrix.invert());
+      list.push({
+        node: object,
+        instance: batched ? i : -1,
+        localX: _groundPoint.x,
+        localY: _groundPoint.y,
+        localZ: _groundPoint.z,
+        x: _groundCentre.x,
+        y: _groundBox.min.y,
+        z: _groundCentre.z,
+        radius: span * 0.5,
+        height,
+        role,
+      });
+    }
+    if (list.length) perSource.push(list);
+  });
+
+  // Round-robin across sources rather than first-come. A city has one batch
+  // with 700 trees in it and a dozen meshes with one lamp each; taking them in
+  // traversal order would spend the whole budget on the first batch and leave
+  // every hydrant on the street ungrounded.
+  const anchors = [];
+  for (let depth = 0; anchors.length < maxAnchors; depth += 1) {
+    let placed = 0;
+    for (const list of perSource) {
+      if (depth >= list.length) continue;
+      anchors.push(list[depth]);
+      placed += 1;
+      if (anchors.length >= maxAnchors) break;
+    }
+    if (!placed) break;
+  }
+
+  return {
+    anchors,
+    sources: perSource.length,
+    scanned,
+    candidates,
+    capped: candidates > anchors.length,
+    skipped,
+  };
+}
+
+/**
+ * Re-read one anchor's world position from its source node.
+ *
+ * Pedestrians walk and traffic drives, so an anchor snapshot taken at build
+ * would slide off its owner within a second. This costs one matrix apply (two
+ * for an instance) and is what lets a moving object keep its contact.
+ *
+ * @param {object} anchor From `collectGroundingAnchors`.
+ * @returns {boolean} False when the source has left the scene or been hidden,
+ *   in which case the caller should drop the anchor's quad.
+ */
+export function refreshGroundingAnchor(anchor) {
+  const node = anchor?.node;
+  if (!node || !node.parent || node.visible === false) return false;
+  if (anchor.instance >= 0) {
+    if (!(anchor.instance < (Number(node.count) || 0))) return false;
+    node.getMatrixAt(anchor.instance, _groundMatrix);
+    _groundMatrix.premultiply(node.matrixWorld);
+  } else {
+    _groundMatrix.copy(node.matrixWorld);
+  }
+  _groundPoint.set(anchor.localX, anchor.localY, anchor.localZ).applyMatrix4(_groundMatrix);
+  if (!Number.isFinite(_groundPoint.x) || !Number.isFinite(_groundPoint.z)) return false;
+  anchor.x = _groundPoint.x;
+  anchor.y = _groundPoint.y;
+  anchor.z = _groundPoint.z;
+  return true;
 }

@@ -41,11 +41,33 @@
  * irradiance and a ground albedo, because a black lower hemisphere is the
  * classic "PBR object floating in a void" tell.
  *
- * The solar disc is deliberately **not** baked into the environment by
- * default (`sunDiscIntensity: 0`). The renderer already owns a
- * `DirectionalLight` key; baking the disc as well would double-count the sun
- * and produce PMREM ringing. The Mie aureole around the sun is kept, so the
- * sky still biases specular toward the sun direction.
+ * The solar disc IS baked into the prefiltered probe, at a measured, bounded
+ * intensity (`DEFAULT_RIG_OPTIONS.sunDiscIntensity`). `computeSkyModel`'s own
+ * default stays 0, because that function is also the analytic light-rig
+ * source and its irradiance must describe the sky alone; the GPU rig, which
+ * exists to feed specular reflections, overrides it.
+ *
+ * Why it was 0, and why that was the wrong trade. The reasoning was that a
+ * `DirectionalLight` key already delivers the sun, so baking the disc as well
+ * double-counts it. That is true of the *diffuse* term and false of the
+ * *specular* one: with no disc in the probe, every reflection in the scene
+ * samples a smooth two-lobe gradient, so a pane's ~4% Fresnel term, wet
+ * asphalt's narrow lobe and a car's clearcoat all reflect nothing but a
+ * vertical ramp. There is no sun to see anywhere in the frame except on the
+ * sky dome itself.
+ *
+ * The double-count is real but it is a *quantity*, so it is bounded rather
+ * than avoided. Integrating the equirect buffer over the upper hemisphere
+ * (cosine-weighted) at 512x256 gives the disc's share of the sky's diffuse
+ * irradiance as a straight line in `sunDiscIntensity`: +13.7% per 0.02 at
+ * 11:00 and 15:00 clear, +3.9% per 0.02 at 18:00. The shipped value is
+ * chosen from that line to stay under 2%, which is below the exposure
+ * quantisation the grade already applies, while the disc's peak radiance is
+ * still ~430x the mean sky radiance - which is the only number a specular
+ * lobe cares about. See `DEFAULT_RIG_OPTIONS`.
+ *
+ * The Mie aureole around the sun is kept either way, so the sky still biases
+ * broad-lobe specular toward the sun direction.
  *
  * Determinism
  * -----------
@@ -108,7 +130,7 @@ import {
  * across versions.
  * @type {string}
  */
-export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v3';
+export const SKY_MODEL_VERSION = 'earthonline-sky-ibl-v4';
 
 /** Supported weather keys. @type {readonly string[]} */
 export const WEATHER_KINDS = Object.freeze(['clear', 'fog', 'drizzle']);
@@ -390,6 +412,8 @@ const smoothstep = (edge0, edge1, x) => {
 };
 
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+/** `value` when it is a finite number, else `fallback`. */
+const finiteOr = (value, fallback) => (isFiniteNumber(value) ? value : fallback);
 
 /** Relative luminance of a linear-sRGB triple. */
 const luminance = (rgb) => 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
@@ -439,12 +463,43 @@ export function normaliseWeather(weather) {
 
 /**
  * Stable cache key for a quantised sky state.
- * @param {{hour:number, weather:string, quantum?:number}} state
+ *
+ * `fingerprint` exists because the hour/weather bucket is NOT the whole
+ * identity of a prefiltered probe: two rigs on the same hour and weather
+ * produce different radiance if they disagree about the solar disc, the
+ * exposure, the equirect resolution or the site. Leaving those out of the key
+ * is how a probe survives a configuration change that should have invalidated
+ * it. `createEnvironmentRig` passes `rigFingerprint(config)`; callers that
+ * only want the hour bucket omit it and get the original three-part key.
+ *
+ * @param {{hour:number, weather:string, quantum?:number, fingerprint?:string}} state
  * @returns {string}
  */
-export function environmentCacheKey({ hour, weather, quantum = 0.25 }) {
+export function environmentCacheKey({ hour, weather, quantum = 0.25, fingerprint = '' }) {
   const q = quantiseHour(hour, quantum);
-  return `${SKY_MODEL_VERSION}|${normaliseWeather(weather)}|${q.toFixed(4)}`;
+  const base = `${SKY_MODEL_VERSION}|${normaliseWeather(weather)}|${q.toFixed(4)}`;
+  return fingerprint ? `${base}|${fingerprint}` : base;
+}
+
+/**
+ * Everything about a rig configuration that changes the radiance it bakes.
+ *
+ * Deliberately explicit rather than a hash of the whole options object: a
+ * `scene` reference or an injected `pmremGenerator` must NOT partition the
+ * cache, and a new radiance-affecting option must be a deliberate edit here.
+ *
+ * @param {object} [config]
+ * @returns {string}
+ */
+export function rigFingerprint(config = {}) {
+  const site = config.site || {};
+  const siteKey = [site.latitudeDeg, site.longitudeDeg, site.utcOffsetHours,
+    site.dayOfYear, typeof site.date === 'object' ? `${site.date.month}-${site.date.day}` : site.date]
+    .map((v) => (v === undefined || v === null ? '' : String(v))).join(',');
+  return `d${Number(config.sunDiscIntensity ?? 0)}`
+    + `|e${Number(config.exposure ?? 1)}`
+    + `|${Number(config.equirectWidth ?? 0)}x${Number(config.equirectHeight ?? 0)}`
+    + (siteKey.replace(/,/g, '') ? `|s${siteKey}` : '');
 }
 
 // --- solar position ----------------------------------------------------------
@@ -956,7 +1011,9 @@ function clearReferenceIrradianceLuminance(sun, sunDiscIntensity) {
  * @param {number} [options.hourQuantum=0.25] Quantisation applied before evaluation.
  * @param {number} [options.exposure=1] Linear multiplier on all radiance.
  * @param {number} [options.sunDiscIntensity=0] Bake the solar disc into the env
- *   map. Leave at 0 while a `DirectionalLight` key exists, or the sun is counted twice.
+ *   map. 0 here on purpose: this function is the analytic light-rig source and
+ *   its `skyIrradiance` must describe the sky alone. The GPU rig overrides it
+ *   with `RIG_SUN_DISC_INTENSITY`, whose double-count budget is stated there.
  * @param {object} [options.site] Overrides for `computeSunDirection`.
  * @param {object} [options.overrides] Direct overrides for turbidity/rayleigh/
  *   mieCoefficient/mieDirectionalG/overcast/isotropy/brightness/wetness/groundAlbedo.
@@ -1348,13 +1405,27 @@ export function renderEquirectRadiance(model, width = 512, height = 256) {
  * radiance levels this module produces. Glass and water are allowed above 1
  * because they are almost entirely specular; masonry and foliage stay low so
  * the env map reads as sky fill rather than a mirror finish.
+ *
+ * `asphalt` is the one entry that is no longer an aesthetic trim. The renderer
+ * gives every classed material its own `envMap` and this intensity, so for a
+ * surface in shadow this number *is* its sky light - and a matched
+ * key-on/key-off capture of the 11:00 clear card measures the shadowed
+ * carriageway at a median 11.5/255 with 55.4% of those pixels under the 12/255
+ * black threshold. At the roughness this project ships for dry road (0.93) the
+ * environment response is diffuse irradiance, not a reflection, so trimming it
+ * is indistinguishable from crushing the shadow side and there is no mirror to
+ * protect against. 0.92 sits just under 1.0, the physical value for a rough
+ * dielectric. `WETNESS_GAIN.asphalt` is cut from 1.15 to 0.85 to absorb most of
+ * the knock-on: the drizzle value moves 1.23 -> 1.50 rather than 1.23 -> 1.74,
+ * and the wet *look* is carried by the roughness drop in `wetSurfaceGrade`,
+ * which is untouched.
  */
 const BASE_ENV_MAP_INTENSITY = Object.freeze({
   'facade-glass': 1.15,
   'facade-masonry': 0.55,
   'facade-painted': 0.62,
   'facade-metal': 0.95,
-  asphalt: 0.65,
+  asphalt: 0.92,
   sidewalk: 0.55,
   'painted-metal': 0.9,
   chrome: 1.25,
@@ -1369,7 +1440,7 @@ const WETNESS_GAIN = Object.freeze({
   'facade-masonry': 0.45,
   'facade-painted': 0.5,
   'facade-metal': 0.3,
-  asphalt: 1.15,
+  asphalt: 0.85,
   sidewalk: 0.85,
   'painted-metal': 0.35,
   chrome: 0.1,
@@ -1536,6 +1607,40 @@ export function baselineFillCurve(daylight) {
 }
 
 /**
+ * Altitude band, in degrees, over which the directional key fades in.
+ *
+ * `[0, 4]` and not a twilight band: the key IS the direct beam, so it must be
+ * exactly zero when the disc is under the horizon and must not come back.
+ * @type {readonly [number, number]}
+ */
+export const KEY_ENVELOPE_ALTITUDE_BAND_DEG = Object.freeze([0, 4]);
+
+/**
+ * The multiplier the integrator applies to the directional key AFTER every
+ * other scale, as a function of solar altitude alone.
+ *
+ * There is exactly one of these in the project and every consumer must read
+ * it from here. It used to exist three times - once in `recommendedLightRig`,
+ * once inside `sceneIlluminance`, once inside `keyFillBalance().delivered` -
+ * and the last two were left behind as `(2 * daylight - 1) ** 2` when the
+ * first was fixed. That form is zero at the horizon and returns to ONE below
+ * it, which is what lit round 4's night card from a sun 28 degrees
+ * underground. It is also wrong in the other direction inside civil twilight:
+ * at +3 deg it books 0.25 where the renderer applies 0.84, so the exposure
+ * curve and the key/fill solver were both reasoning about a key 3.4x weaker
+ * than the one the frame gets. Both cards that live in that band - the
+ * golden-hour card and the dusk end of the night ramp - were mis-exposed by
+ * it.
+ *
+ * @param {number} altitudeDeg Solar altitude in degrees.
+ * @returns {number} 0 at and below the horizon, 1 from +4 deg, monotone between.
+ */
+export function keyEnvelope(altitudeDeg) {
+  if (!isFiniteNumber(altitudeDeg)) return 0;
+  return smoothstep(KEY_ENVELOPE_ALTITUDE_BAND_DEG[0], KEY_ENVELOPE_ALTITUDE_BAND_DEG[1], altitudeDeg);
+}
+
+/**
  * Reference clear-sky irradiance luminance at the canonical noon, used to
  * normalise the fill curve. Recomputed lazily and memoised, never hard-coded,
  * so it cannot drift away from the sky model.
@@ -1698,6 +1803,35 @@ export function recommendedLightRig(modelOrState, baseline = BASELINE_LIGHT_RIG)
         (beam.transmittance * Math.max(0, model.sun.y))
         / Math.max(1e-9, directBeamTransmittance(52.73).transmittance * Math.sin(52.73 * DEG)),
       ),
+      /**
+       * Multiplier the integrator applies to the directional key's intensity
+       * AFTER every other scale. It is a function of solar altitude alone.
+       *
+       * Why this exists, and what it replaces. Round 4's night card shipped a
+       * key at intensity 0.2997 with `castShadow: true` and a shadow fit
+       * reporting 52 deg, at an hour where this model reports the sun at
+       * -28.12 deg, key illuminance 0.0000, `shadow.castShadow: false`,
+       * `relativeIrradiance: 0` and a key/fill target of 0. Four separate
+       * model outputs said "no key"; the frame had one anyway, strongly enough
+       * that switching it off moved 421964 pixels by 24 luma or more. The
+       * cause is an envelope of the form `(2 * daylight - 1) ** 2`, which is
+       * zero exactly at the horizon crossing and returns to ONE below it - so
+       * a key that was only ever meant to survive twilight came back at full
+       * strength all night, pointed at a reflected, lifted, invented
+       * direction.
+       *
+       * `smoothstep(0, 4)` in altitude instead: 1 at the golden-hour card's
+       * +6.61 deg (so no daylight card changes by a single step), 0.5 at
+       * +2 deg, and exactly 0 at and below the horizon. It is monotone in
+       * altitude, so it cannot come back.
+       *
+       * A night city is carried by its practicals, its windows and the sky
+       * dome. If that leaves it dark, the answer is the practicals, not a
+       * directional key at 1/27 of daylight standing where no sun is.
+       */
+      envelope: round4(keyEnvelope(model.sun.altitudeDeg)),
+      /** Never cast from a key the sun is not behind. */
+      castShadow: model.sun.altitudeDeg > 0,
     }),
     shadow: Object.freeze({
       castShadow: model.sun.altitudeDeg > 0,
@@ -1807,6 +1941,23 @@ export const SHADOW_FIT_DEFAULTS = Object.freeze({
   normalBiasTexels: 1.25,
   /** `bias` in texel widths of depth pull-back. */
   depthBiasTexels: 0.5,
+  /**
+   * The model's TRUE solar altitude, in degrees, when the key direction handed
+   * in is not the sun.
+   *
+   * The fit only ever sees a direction. Round 4 recorded what that costs: the
+   * renderer's night rig reflects the key to the anti-solar azimuth and lifts
+   * it to a fixed 52 deg, so at 21:30 - with `computeSkyModel` reporting the
+   * sun at -28.12 deg - the fit was handed a 52 deg direction, dutifully
+   * reported `sunAltitudeDeg: 52.0` and `castShadow: true`, and the capture
+   * report published a night city whose shadow camera believed the sun was 52
+   * degrees UP. Nothing in the fit was wrong; the name was.
+   *
+   * Supply this and the fit reports both altitudes separately and refuses to
+   * cast when the real sun is down. Leave it null and the behaviour is exactly
+   * what it was.
+   */
+  solarAltitudeDeg: null,
 });
 
 /**
@@ -1893,6 +2044,7 @@ export function computeSunShadowCamera(options = {}) {
     texelSnap,
     normalBiasTexels,
     depthBiasTexels,
+    solarAltitudeDeg,
   } = config;
 
   if (!isFiniteNumber(fovDeg) || fovDeg <= 0 || fovDeg >= 180) {
@@ -2038,6 +2190,20 @@ export function computeSunShadowCamera(options = {}) {
   const bias = -round((depthBiasTexels * texelWorld * 2) / depthRange, 7);
 
   const warnings = [];
+  // Is the direction we were handed actually the sun?
+  const solarAltitude = isFiniteNumber(solarAltitudeDeg) ? solarAltitudeDeg : null;
+  const keyIsSun = solarAltitude === null || Math.abs(solarAltitude - sunAltitudeDeg) <= 0.5;
+  const solarBelowHorizon = solarAltitude !== null && solarAltitude <= 0;
+  if (!keyIsSun) {
+    warnings.push(`the key direction is at ${sunAltitudeDeg.toFixed(2)} deg but the model puts the sun `
+      + `at ${solarAltitude.toFixed(2)} deg: this fit describes the KEY, not the sun. Read keyAltitudeDeg, `
+      + 'not sunAltitudeDeg, and do not publish this number as a solar altitude');
+  }
+  if (solarBelowHorizon) {
+    warnings.push(`the sun is ${solarAltitude.toFixed(2)} deg below the horizon: castShadow is forced false `
+      + 'no matter where the key points. A night city is lit by its practicals, not by a directional key '
+      + 'reflected overhead');
+  }
   if (sunAltitudeDeg <= 0) {
     warnings.push('sun is below the horizon: set light.castShadow = false and let the local lights carry the night');
   } else if (sunAltitudeDeg < minCasterAltitudeDeg) {
@@ -2083,9 +2249,23 @@ export function computeSunShadowCamera(options = {}) {
     casterExtrusion,
     casterExtrusionUnclamped: rawExtrusion,
     centreDistance,
+    /**
+     * Altitude of the direction this fit was handed, in degrees. Historically
+     * called `sunAltitudeDeg`, which is only true when `keyIsSun`.
+     */
     sunAltitudeDeg,
+    keyAltitudeDeg: sunAltitudeDeg,
+    /** The model's own solar altitude, when it was supplied. */
+    solarAltitudeDeg: solarAltitude,
+    /** False when the key has been reflected or lifted away from the sun. */
+    keyIsSun,
     shadowDistance,
-    castShadow: sunAltitudeDeg > 0,
+    /**
+     * A shadow map is a record of where the SUN cannot reach. Below the horizon
+     * there is no sun, so there is nothing for it to record - whatever the key
+     * direction happens to be.
+     */
+    castShadow: sunAltitudeDeg > 0 && !solarBelowHorizon,
     frustumCorners: Object.freeze(frustumCorners.map((corner) => Object.freeze(corner))),
     lightSpaceBounds: Object.freeze(bounds),
     lightBasis: Object.freeze({
@@ -2261,21 +2441,52 @@ export const EXPOSURE_CURVE = Object.freeze({
 /**
  * Target key/fill ratio at high sun, per weather bucket.
  *
- * Clear sits below the physical 5.8 on purpose: the renderer tone-maps with a
- * fixed per-frame exposure and has no local adaptation, so a fully physical
- * ratio drops the shadow side below the point where facade material reads at
- * all. 4.0 is the ratio at which a cast shadow is unmistakably a value change
- * (about 55% of the lit value through ACES) while the shadow side keeps its
- * albedo. Overcast buckets sit near 1 because that is what an overcast sky
- * physically does - the sky *is* the key.
+ * Clear now targets the physical direct/diffuse ratio itself: about 640 W/m2
+ * direct-horizontal against 110 W/m2 diffuse-horizontal at the reference
+ * altitude, i.e. 5.8. Overcast buckets sit near 1 because that is what an
+ * overcast sky physically does - the sky *is* the key.
+ *
+ * Why the earlier 4.0 discount is gone
+ * ------------------------------------
+ * 4.0 was a deliberate discount below physical, on the argument that a fully
+ * physical ratio "drops the shadow side below the point where facade material
+ * reads at all". A matched key-on/key-off capture pair settles that argument
+ * with a measurement instead. On the 11:00 clear card, sampling the *same*
+ * pixels with `sun.intensity = 5.60` and with `sun.intensity = 0`:
+ *
+ *   footway     lit 191.1/255   fully shadowed 68.8/255
+ *   carriageway lit  85.2/255   fully shadowed 11.5/255 (median)
+ *
+ * Inverting ACES on the footway pair eliminates the surface albedo entirely
+ * and leaves `1 + key/fill = 6.29`, so the rig is already delivering a
+ * scene-referred key/fill of **5.29** to a horizontal surface - close to the
+ * physical 5.8, and about twice what `achieved.ratio` books (see the
+ * `delivered` block below for where the two bookings diverge).
+ *
+ * The discount therefore was not protecting the shadow side. What protects the
+ * shadow side is `SHADOW_DISPLAY_FLOOR`, and the same card shows that floor is
+ * the binding constraint, not a spare one: the shadowed carriageway sits at a
+ * median 11.5/255 with 55.4% of its pixels under 12/255. Cutting fill to raise
+ * contrast
+ * is measurably unavailable. Raising the target moves the whole change onto the
+ * lit side, where there is headroom, and leaves the fill on its floor.
  */
-export const TARGET_KEY_FILL = Object.freeze({ clear: 4.0, fog: 0.9, drizzle: 1.1 });
+export const TARGET_KEY_FILL = Object.freeze({ clear: 5.8, fog: 0.9, drizzle: 1.1 });
 
 /** Reference altitude the target ratio is quoted at (canonical solar noon). */
 export const KEY_FILL_REFERENCE_ALTITUDE_DEG = 50.08;
 
 /** Clamp on the gains `keyFillBalance` will ask for. */
 export const KEY_FILL_GAIN_RANGE = Object.freeze({ key: [0.5, 6.5], fill: [0.2, 1.6] });
+
+/**
+ * Material class `keyFillBalance().delivered` is quoted for.
+ *
+ * The footway is the surface the street cards are mostly made of and the one
+ * the matched key-on/key-off capture was sampled on, so quoting the delivered
+ * prediction for anything else would not be checkable.
+ */
+export const DELIVERED_REFERENCE_CLASS = 'sidewalk';
 
 const _illuminanceReference = { value: 0 };
 
@@ -2294,10 +2505,11 @@ const _illuminanceReference = { value: 0 };
 export function sceneIlluminance(model, baseline = BASELINE_LIGHT_RIG) {
   const beam = directBeamTransmittance(model.sun.altitudeDeg);
   const rigSunScale = model.lightRig ? model.lightRig.scales.sun : 1;
-  // The renderer squares `(2*daylight - 1)` onto the key so it crosses zero at
-  // the horizon; the illuminance has to see the same envelope or the exposure
-  // curve would ramp against a key that is not there.
-  const envelope = (2 * model.daylight - 1) ** 2;
+  // The illuminance has to see the same envelope the renderer applies, or the
+  // exposure curve ramps against a key that is not there (or misses one that
+  // is). Read from `keyEnvelope`, never re-derived: see the note on that
+  // function for what the two stale copies of this line cost.
+  const envelope = keyEnvelope(model.sun.altitudeDeg);
   const key = Math.max(0, model.sun.y) * baseline.sun * rigSunScale * beam.transmittance * envelope;
   const sky = model.skyIrradianceLuminance;
   return { sky, key, total: sky + key };
@@ -2568,6 +2780,54 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
   const achievedKey = keyAfter;
   const achievedFill = fillAfter;
   const round = (value) => Math.round(value * 10000) / 10000;
+
+  // The values the renderer is actually handed, hoisted so the `delivered`
+  // block below can be built from exactly the same numbers `apply` publishes.
+  const applyEnvironmentIntensity = clamp(
+    rig.environmentIntensity * Math.max(directFillGain, MIN_ENVIRONMENT_SHARE),
+    0,
+    2,
+  );
+  const applyHemiScale = clamp(rig.scales.hemi * directFillGain, 0.02, 1.2);
+  const applyAmbientScale = clamp(ambientAfter / Math.max(1e-6, curve.ambient), 0.02, 2.6);
+  const applyRimScale = clamp(rig.scales.rim * directFillGain * 0.85, 0.02, 1);
+
+  // --- what the rig above will actually deliver -----------------------------
+  //
+  // `measured`/`achieved` book the *solver's* view: an atmospherically
+  // transmitted beam against a fill that is scaled by `fillGain`. Neither is
+  // what reaches a pixel, and the gap is not small. Two structural differences,
+  // both readable straight off the renderer:
+  //
+  //  1. **The key carries no extinction.** `sceneIlluminance` multiplies the
+  //     beam by `directBeamTransmittance` (0.58 at +43 deg), because that is
+  //     physically right for an illuminance. The renderer's key is
+  //     `intensity * sunScale` with a hand-authored colour; nothing applies
+  //     transmittance to it. So the delivered key is the *untransmitted* beam.
+  //  2. **The environment is graded per material class.** The renderer gives
+  //     every classed material its own `envMap` and `envMapIntensityFor(class)`,
+  //     which for a street surface is well under the global
+  //     `scene.environmentIntensity` this function floors at
+  //     `MIN_ENVIRONMENT_SHARE`. A shadowed footway is lit by the class value,
+  //     not by the global one.
+  //
+  // Together those two are why the shipped 11:00 clear card measures a
+  // scene-referred key/fill of 5.29 (from key-on/key-off on the same footway
+  // pixels, which cancels the surface albedo exactly) while `achieved.ratio`
+  // books 2.78. This block is the module's own prediction of that measurement,
+  // so the next capture can check it instead of inferring it.
+  //
+  // It is a prediction, not a reading: it models the renderer's day curve with
+  // `BASELINE_LIGHT_RIG.sun` and assumes white light colours, and the renderer
+  // uses neither. On the one card available it lands about 17% under the
+  // measured ratio, which is the size of the light-colour and prefilter losses
+  // it does not model.
+  const deliveredKey = Math.max(0, model.sun.y) * baseline.sun * rig.scales.sun
+    * keyEnvelope(model.sun.altitudeDeg) * keyGain;
+  const deliveredEnvironment = model.skyIrradianceLuminance
+    * envMapIntensityFor(DELIVERED_REFERENCE_CLASS, model);
+  const deliveredPunctual = curve.hemi * applyHemiScale + curve.ambient * applyAmbientScale;
+  const deliveredFill = deliveredEnvironment + deliveredPunctual;
   return Object.freeze({
     version: ATMOSPHERE_MODEL_VERSION,
     hour: model.hour,
@@ -2609,6 +2869,21 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       exposure,
     }),
     /**
+     * Predicted scene-referred irradiance the rig in `apply` puts on a
+     * horizontal surface of `referenceClass`, in the renderer's own units.
+     * This is the number a matched key-on/key-off capture measures; `achieved`
+     * is the number the solver reasons with. See the comment above the block
+     * for the two reasons they differ.
+     */
+    delivered: Object.freeze({
+      referenceClass: DELIVERED_REFERENCE_CLASS,
+      key: round(deliveredKey),
+      environment: round(deliveredEnvironment),
+      punctual: round(deliveredPunctual),
+      fill: round(deliveredFill),
+      ratio: round(deliveredKey / Math.max(1e-9, deliveredFill)),
+    }),
+    /**
      * Absolute values an integrator can set directly. `sun` multiplies the
      * renderer's own day/night key curve after `lightRig.scales.sun`; the
      * environment/hemi/ambient entries replace their equivalents.
@@ -2618,14 +2893,10 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       // Floored: `scene.environmentIntensity` is the only light a material
       // without its own `envMap` gets from the sky, and for a metal or a glass
       // tower it is the only light of any kind.
-      environmentIntensity: round(clamp(
-        rig.environmentIntensity * Math.max(directFillGain, MIN_ENVIRONMENT_SHARE),
-        0,
-        2,
-      )),
+      environmentIntensity: round(applyEnvironmentIntensity),
       // `fillGain` now carries the ambient floor as well, so hemi and rim are
       // scaled by the gain the *dome* asked for, not by the floored total.
-      hemiScale: round(clamp(rig.scales.hemi * directFillGain, 0.02, 1.2)),
+      hemiScale: round(applyHemiScale),
       // Ambient carries a floor rather than just the fill gain, because it is
       // the only light in the rig that reaches a surface facing away from the
       // sky, the ground and the key. The floor is computed, not chosen: it is
@@ -2634,10 +2905,10 @@ export function keyFillBalance(modelOrState, baseline = BASELINE_LIGHT_RIG) {
       // after whatever the environment already delivers to such a normal. At
       // clear noon the environment alone already clears it and this is inert;
       // at night the environment is 0.029 and it is not.
-      ambientScale: round(clamp(ambientAfter / Math.max(1e-6, curve.ambient), 0.02, 2.6)),
+      ambientScale: round(applyAmbientScale),
       // The rim is pure fill with no physical counterpart once the env dome is
       // present, so it takes the fill cut and a little more.
-      rimScale: round(clamp(rig.scales.rim * directFillGain * 0.85, 0.02, 1)),
+      rimScale: round(applyRimScale),
       exposure,
     }),
     note: 'contrast is raised against a floored shadow side, not against the frame total: '
@@ -2718,9 +2989,17 @@ export function canyonBounce(model, keyGain = 1, baseline = BASELINE_LIGHT_RIG) 
  * Calibrated against the two round-1 cards that read correctly: the 11:00 card
  * delivered 0.49 on this measure and its shadowed footway reads about 62/255,
  * which is comfortably legible; the shipped pre-wave rig delivered 1.32 and
- * read as flat. 0.62 sits above the card that worked, with margin.
+ * read as flat.
+ *
+ * Raised from 0.62 to 0.66 when the key target went to the physical ratio. The
+ * key-off capture of the 11:00 clear card shows the shadow side is *not* the
+ * spare term: its shadowed carriageway reads a median 11.5/255 with 55.4% of
+ * those pixels under 12/255, so the shadow side is already at the crush limit.
+ * 0.66 is the value at which the shipped card's own `fill * exposure` (0.654 at
+ * 11:00, 0.627 at 12:00) is a floor rather than a coincidence, so raising the
+ * key target cannot claw back any part of the shadow side to pay for it.
  */
-export const SHADOW_DISPLAY_FLOOR = 0.62;
+export const SHADOW_DISPLAY_FLOOR = 0.66;
 
 /** The fill is never cut below this fraction of the rig's own recommendation. */
 export const MIN_FILL_GAIN = 0.45;
@@ -3223,6 +3502,19 @@ export function nightPracticalProfile(modelOrState) {
        */
       peakDisplay: Math.round(82 * Math.min(1.35, wetGain)),
       /**
+       * The same peak with the wet gain removed.
+       *
+       * A painted pool is a decal standing in for BOTH the light landing on
+       * the road and the specular streak the wet road returns, so its peak
+       * rises in the rain. A real luminaire's output does not change when it
+       * rains. A point light solved against the wet peak therefore
+       * double-counts the wetness the material grade is already applying
+       * through its roughness and albedo - and asks for an intensity 2.2x the
+       * clear one, which on the canonical 21:30 drizzle rig runs past the
+       * solver's own clamp. Anything solving for a real fixture reads this.
+       */
+      dryPeakDisplay: 82,
+      /**
        * The throw over the carriageway. A street lamp is not a point source
        * over its own base: the head is on an outreach arm and the distribution
        * is deliberately biased across the road, which is the whole reason the
@@ -3242,6 +3534,8 @@ export function nightPracticalProfile(modelOrState) {
       depth: round4(3.6 * (1 + 0.3 * model.wetness)),
       opacity: round4(clamp(dusk * wetGain, 0, 1)),
       peakDisplay: Math.round(88 * Math.min(1.25, wetGain)),
+      /** The fixture's own output, with the wet gain removed. @see pool.dryPeakDisplay */
+      dryPeakDisplay: 88,
       color: Object.freeze([1.0, 0.83, 0.60]),
       occupancy: round4(clamp(occupancy * 1.25, 0, 0.95)),
     }),
@@ -3270,6 +3564,106 @@ export function nightPracticalProfile(modelOrState) {
     }),
     /** Ambient sky glow the practicals themselves put back into the dome. */
     skyGlow: round4(night * (weatherProfile(model.weather).urbanGlow ?? 0.6)),
+  });
+}
+
+/**
+ * Default reflectance the practical solver quotes its peak against.
+ *
+ * The footway is the surface a night street card is mostly made of and the
+ * surface the pool decals were authored over, so the peak is quoted for it.
+ * @type {number}
+ */
+export const PRACTICAL_REFERENCE_ALBEDO = 0.42;
+
+/**
+ * Intensity a `PointLight` needs so its pool reads at a stated DISPLAY level.
+ *
+ * Why this is not a hand-typed intensity
+ * --------------------------------------
+ * `nightPracticalProfile` already specifies every painted practical in display
+ * steps (`pool.peakDisplay`, `shopSpill.peakDisplay`), for the reason given
+ * there: three tone-maps per material, so a scene-referred number for a
+ * practical is not exposure-independent and does not survive a change to the
+ * exposure curve. Wave B replaced the painted pools near the camera with real
+ * point lights and gave those lights hand-authored intensities instead, which
+ * puts the two halves of the same fixture on two different scales. Measured on
+ * the canonical 21:30 rig, the hand-authored street lamp (intensity 0.72,
+ * decay 2.1, at 4.8 m over its own pool centre) delivers irradiance 0.0267
+ * where the decal it replaces claims 82 display steps: the real light is about
+ * a fiftieth of the painted one it fades out.
+ *
+ * This inverts the display chain instead. Given the background the surface is
+ * already sitting at, it solves for the extra irradiance that lands the pool
+ * centre `peakDisplay` steps higher after ACES and the sRGB transfer, then
+ * divides by three's own distance attenuation at the fixture's geometry to get
+ * the intensity. The result is exposure-independent by construction and moves
+ * correctly with weather, because `peakDisplay` does.
+ *
+ * Deterministic and pure: no clock, no seed, no renderer state.
+ *
+ * @param {object} options
+ * @param {number} options.peakDisplay Steps out of 255 the pool centre adds.
+ * @param {number} options.exposure `renderer.toneMappingExposure`.
+ * @param {number} options.backgroundIrradiance Irradiance already on the surface.
+ * @param {number} [options.albedo=PRACTICAL_REFERENCE_ALBEDO] Surface reflectance.
+ * @param {number} options.distance Metres from the fixture to the pool centre.
+ * @param {number} [options.decay=2] `light.decay`.
+ * @param {number} [options.cutoffDistance=0] `light.distance`; 0 for no window.
+ * @param {number} [options.maxIntensity=64] Clamp, so a pathological background
+ *   cannot ask for an unbounded light.
+ * @returns {Readonly<object>}
+ */
+export function practicalPointLightIntensity(options = {}) {
+  const peakDisplay = Math.max(0, finiteOr(options.peakDisplay, 0));
+  const exposure = Math.max(1e-6, finiteOr(options.exposure, 1));
+  const background = Math.max(0, finiteOr(options.backgroundIrradiance, 0));
+  const albedo = clamp(finiteOr(options.albedo, PRACTICAL_REFERENCE_ALBEDO), 0.01, 1);
+  const distance = Math.max(0.05, finiteOr(options.distance, 1));
+  const decay = clamp(finiteOr(options.decay, 2), 0, 4);
+  const cutoff = Math.max(0, finiteOr(options.cutoffDistance, 0));
+  const maxIntensity = Math.max(0, finiteOr(options.maxIntensity, 64));
+
+  const backgroundDisplay = displayValue((albedo * background) / Math.PI, exposure);
+  // ACES saturates; leave a step of headroom so a bright background cannot ask
+  // for an infinite light to clear a display level it can never reach.
+  const targetDisplay = Math.min(backgroundDisplay + peakDisplay / 255, 254 / 255);
+  const targetScene = sceneForDisplay(targetDisplay, exposure);
+  const targetIrradiance = (targetScene * Math.PI) / albedo;
+  const deltaIrradiance = Math.max(0, targetIrradiance - background);
+
+  // three's punctual distance attenuation, `getDistanceAttenuation` in
+  // three/src/nodes/lighting/LightUtils.js: an inverse power law windowed to
+  // zero at `light.distance`. Reproduced, not approximated - an intensity
+  // solved against a different falloff is not a solved intensity.
+  let attenuation = 1 / Math.max(Math.pow(distance, decay), 0.01);
+  if (cutoff > 0) {
+    const window = clamp(1 - Math.pow(distance / cutoff, 4), 0, 1);
+    attenuation *= window * window;
+  }
+
+  const raw = attenuation > 1e-9 ? deltaIrradiance / attenuation : maxIntensity;
+  const intensity = clamp(raw, 0, maxIntensity);
+  const achievedIrradiance = background + intensity * attenuation;
+  const achievedDisplay = displayValue((albedo * achievedIrradiance) / Math.PI, exposure);
+  const round4 = (value) => Math.round(value * 10000) / 10000;
+  return Object.freeze({
+    version: ATMOSPHERE_MODEL_VERSION,
+    intensity: round4(intensity),
+    raw: round4(raw),
+    clamped: raw > maxIntensity,
+    albedo,
+    distance: round4(distance),
+    decay,
+    cutoffDistance: cutoff,
+    attenuation: round4(attenuation),
+    backgroundIrradiance: round4(background),
+    backgroundDisplay: Math.round(backgroundDisplay * 2550) / 10,
+    targetIrradiance: round4(targetIrradiance),
+    deltaIrradiance: round4(deltaIrradiance),
+    /** Steps out of 255 the pool centre actually reaches over the background. */
+    achievedPeakDisplay: Math.round((achievedDisplay - backgroundDisplay) * 2550) / 10,
+    achievedDisplay: Math.round(achievedDisplay * 2550) / 10,
   });
 }
 
@@ -3369,13 +3763,44 @@ export function wetSurfaceGrade(materialClass, modelOrState) {
 
 // --- GPU rig -----------------------------------------------------------------
 
+/**
+ * The solar disc intensity baked into the prefiltered probe.
+ *
+ * Measured, not chosen by eye. Two quantities move together with this number
+ * and they pull in opposite directions:
+ *
+ *   * **Double count.** The disc adds diffuse irradiance the analytic
+ *     `DirectionalLight` key is already delivering. Integrating the 512x256
+ *     equirect over the upper hemisphere, cosine-weighted, the added share of
+ *     the sky's own irradiance is linear in this value: +13.7% per 0.02 at
+ *     11:00 and 15:00 clear, +3.9% per 0.02 at 18:00. At 0.0025 that is
+ *     +1.71% of the sky term at midday. The sky and the key deliver 1.076 and
+ *     1.145 lux-equivalents respectively in the 15:00 rig, so the error on the
+ *     total is +0.83% - under the 0.05-stop resolution of the exposure curve
+ *     and well under the tone mapper's own noise.
+ *   * **Specular reach.** Peak equirect radiance at 0.0025 is 121 against a
+ *     mean sky radiance of 0.282, a ratio of 430:1. That ratio, not the
+ *     absolute level, is what a specular lobe reflects: a pane's ~4% Fresnel
+ *     term returns a highlight two orders of magnitude above the sky it sits
+ *     in, and a narrow wet-asphalt lobe (roughness 0.24) integrates the disc
+ *     to roughly 9x the local sky radiance at the mirror angle.
+ *
+ * Half-float headroom is not a constraint here: 121 is three orders below the
+ * 65504 ceiling `createEquirectTexture` clamps to, so nothing clips and the
+ * PMREM has no single-texel spike to ring on.
+ *
+ * `computeSkyModel`'s own default stays 0. That function is the analytic
+ * light-rig source and its `skyIrradiance` must describe the sky alone.
+ */
+export const RIG_SUN_DISC_INTENSITY = 0.0025;
+
 const DEFAULT_RIG_OPTIONS = Object.freeze({
   equirectWidth: 512,
   equirectHeight: 256,
   hourQuantum: 0.25,
   cacheSize: 8,
   exposure: 1,
-  sunDiscIntensity: 0,
+  sunDiscIntensity: RIG_SUN_DISC_INTENSITY,
 });
 
 /**
@@ -3428,7 +3853,8 @@ function createEquirectTexture(buffer) {
  * @param {number} [options.hourQuantum=0.25] Hours per cache bucket.
  * @param {number} [options.cacheSize=8] Prefiltered targets retained.
  * @param {number} [options.exposure=1]
- * @param {number} [options.sunDiscIntensity=0]
+ * @param {number} [options.sunDiscIntensity=RIG_SUN_DISC_INTENSITY] Solar disc
+ *   radiance baked into the probe. Part of the rig's cache fingerprint.
  * @param {object} [options.site] Overrides for solar position.
  * @param {boolean} [options.applyEnvironmentIntensity=true] Also write
  *   `scene.environmentIntensity` from the recommended light rig.
@@ -3457,6 +3883,11 @@ export function createEnvironmentRig(renderer, options = {}) {
   }
 
   const config = { ...DEFAULT_RIG_OPTIONS, ...options };
+  // Radiance identity of THIS rig. Without it two rigs that disagree about the
+  // solar disc, the exposure, the equirect size or the site would share cache
+  // entries, and a configuration change would be silently served the probe it
+  // was supposed to invalidate.
+  const fingerprint = rigFingerprint(config);
   const pmrem = config.pmremGenerator || new PMREMGenerator(renderer);
   /** @type {Map<string, {target: object, model: object}>} */
   const cache = new Map();
@@ -3466,6 +3897,8 @@ export function createEnvironmentRig(renderer, options = {}) {
   let currentTarget = null;
   const stats = {
     version: SKY_MODEL_VERSION,
+    fingerprint,
+    sunDiscIntensity: config.sunDiscIntensity,
     generated: 0,
     cacheHits: 0,
     cacheMisses: 0,
@@ -3531,7 +3964,7 @@ export function createEnvironmentRig(renderer, options = {}) {
     assertLive();
     const hour = state?.hour ?? 12;
     const weather = normaliseWeather(state?.weather ?? 'clear');
-    const key = environmentCacheKey({ hour, weather, quantum: config.hourQuantum });
+    const key = environmentCacheKey({ hour, weather, quantum: config.hourQuantum, fingerprint });
     const hit = cache.get(key);
     if (hit) {
       stats.cacheHits += 1;

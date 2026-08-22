@@ -219,6 +219,9 @@ export const STREET_SURFACE_V2_DEFAULTS = Object.freeze({
   rampWidth: 1.6,
   rampRun: 1.2,
   rampLift: 0.006,
+  // The residual kerb face left across a depressed kerb, so the kerb line is
+  // continuous around a corner instead of stopping dead at every ramp.
+  rampLipHeight: 0.022,
   // paint
   markingLift: 0.012,
   edgeLineWidth: 0.12,
@@ -230,13 +233,36 @@ export const STREET_SURFACE_V2_DEFAULTS = Object.freeze({
   minMarkedHalfWidth: 2.2,
   // junction paint
   crosswalkBandDepth: 2.4,
-  crosswalkStripePitch: 0.8,
+  crosswalkStripePitch: 0.85,
   crosswalkStripeWidth: 0.45,
   crosswalkEdgeInset: 0.3,
   crosswalkClearance: 0.35,
   stopBarDepth: 0.5,
   stopBarClearance: 1.2,
   stopBarEdgeInset: 0.15,
+  // HOW FAR BACK FROM A NODE THE LONGITUDINAL PAINT STOPS (round 6).
+  //
+  // Round 4 ran the edge lines, the centre line and every lane divider the
+  // whole length of the trimmed ribbon, straight under the crossing band and
+  // the stop bar. Four of five reviewers read the result as several stripe
+  // fields at incompatible angles stamped over each other, because a zebra
+  // laid across continuous longitudinal lines IS two marking families in the
+  // same square metre. A real carriageway stops its longitudinal lines at the
+  // stop line and leaves the crossing and the intersection box unmarked.
+  //
+  // The reserved zone at an approach that earns junction paint therefore runs
+  // from the pad edge out to the START of the stop bar, and the last stretch
+  // of dashed divider before it is repainted solid, which is the lane-change
+  // prohibition every approach to a junction carries.
+  markingBoxClearance: 0.6,   // unmarked box past the pad edge at a bare node
+  markingSolidApproach: 12,   // dashed dividers go solid this far before the box
+  // Crossing family. ONE bar width and ONE bar pitch for the whole city, so
+  // two crossings at one node cannot read as two different families. The
+  // number of bars is whatever that fixed pitch fits, never a count that
+  // rescales the pitch to the road width.
+  crossingStripePitch: 0.85,
+  crossingStripeWidth: 0.45,
+  crossingMinStripes: 3,
   // Junction paint sits 3 mm above segment paint so a zebra band or a stop bar
   // that crosses an edge line / centre line / lane divider wins cleanly instead
   // of fighting it. Both values are still world-space lifts above the SAME
@@ -254,6 +280,13 @@ export const STREET_SURFACE_V2_DEFAULTS = Object.freeze({
   // source of truth; turn it on when the active city exposes far fewer
   // intersections than it has real crossings.
   inferNodes: false,
+  // Where two paved corridors overlap and no junction joins them, the busier
+  // street stays continuous and the other one stops at its paved edge. See
+  // `planCarriagewayYield`. `yieldClearFraction` is how much of the loser's own
+  // paved half-reach the cut is pulled in by, which is what keeps the removal
+  // inside pavement the winner is laying anyway.
+  carriagewayYield: true,
+  yieldClearFraction: 1.5,
   excludeHighways: HIDDEN_PATH_CLASSES,
   unmarkedHighways: UNMARKED_CLASSES,
   uvMetersPerRepeat: Object.freeze({ carriageway: 4, concrete: 2.6, marking: 1 }),
@@ -284,9 +317,23 @@ const PALETTES = Object.freeze({
     // large flat area at the footway's own tone reads as a light box.
     path: '#ded5c4',
     verge: '#9a9384',
-    markingWhite: '#f4efe2',
-    markingYellow: '#e6b93f',
-    crosswalk: '#fbf6ea',
+    // PAINT TONE (round 5). READ THIS BEFORE BRIGHTENING THESE THREE.
+    //
+    // Round 4 shipped markingWhite at linear 0.87 and the crosswalk band at
+    // linear 0.90. Fresh thermoplastic and fresh cold paint measure 0.55-0.70
+    // linear; nothing on a street is 0.87 except a specular highlight. The
+    // consequence is measurable in two places: the day cards read as printed
+    // decal because the paint has no headroom left above it, and in the night
+    // card the markings hold near full value in a street with no key on it,
+    // because a 0.87 albedo needs almost no light to stay bright.
+    //
+    // These are the DIFFUSE ALBEDO of the paint. The rendered value is this
+    // tint multiplied by PAINT_MAP (bead speckle and wear break-up, mean
+    // linear PAINT_MAP_STATS.meanLinear), so the fresh-texel value is the
+    // number below and the area mean lands a little under it.
+    markingWhite: '#d5d1c5',   // linear 0.620 mean, was 0.843
+    markingYellow: '#d0a638',  // linear luma 0.411, was 0.514
+    crosswalk: '#dad6cc',      // linear 0.660 mean, was 0.902
   }),
   stylised: Object.freeze({
     asphalt: Object.freeze({
@@ -301,9 +348,10 @@ const PALETTES = Object.freeze({
     ramp: '#d8bd90',
     path: '#d2b78c',
     verge: '#7d7256',
-    markingWhite: '#efe8d4',
-    markingYellow: '#e6b93f',
-    crosswalk: '#fff4dc',
+    // Same treatment as the sf palette above: paint albedo, not paint highlight.
+    markingWhite: '#d8d2c0',   // linear 0.620 mean, was 0.776
+    markingYellow: '#d0a638',  // linear luma 0.411, was 0.514
+    crosswalk: '#e1d8c2',      // linear 0.660 mean, was 0.873
   }),
 });
 
@@ -325,6 +373,227 @@ export const STREET_SURFACE_V2_ENV_CLASSES = Object.freeze({
   concrete: 'sidewalk',
   markings: 'painted-metal',
 });
+
+// ---------------------------------------------------------------------------
+// road paint albedo tile
+// ---------------------------------------------------------------------------
+//
+// WHY PAINT NEEDS A TEXTURE AT ALL.
+//
+// Through round 4 the marking material was `vertexColors` and nothing else, so
+// every square metre of paint in the city rendered as one flat value. Measured
+// on card 01 the eight stripes of one crossing had means of 230.2-232.3 sRGB -
+// a 0.9% spread across a crossing that in reality is scrubbed by two wheel
+// paths, chipped at every edge and repainted in strips. A flat value is what
+// makes paint read as a printed decal rather than as a 2 mm layer of resin and
+// glass bead lying on top of the road.
+//
+// This tile supplies the part of that variation that is INSIDE the paint,
+// independent of where the stripe is:
+//   * bead speckle - retroreflective glass beads broadcast into hot binder,
+//     which is what makes fresh paint sparkle rather than sit matte;
+//   * wear break-up - the thin, translucent areas where the binder has been
+//     scrubbed back toward the road, concentrated into blotches rather than
+//     spread as uniform noise, because that is how paint actually fails;
+//   * edge break-up - a fine ragged modulation at bead scale, so a stripe edge
+//     sampled at a grazing angle is not a mathematically straight line.
+// The part of the variation that depends on WHERE the stripe is - repaint age
+// per junction, tyre tracks across the band - is vertex colour, and lives in
+// `emitApproachPaint` and in the street-detail pass.
+//
+// Pure integer arithmetic, no canvas, no Math.random: the tile is identical in
+// node and in the browser, which is what lets `PAINT_MAP_STATS` be asserted.
+// It is one shared 128x128 RGBA tile for the whole city, 65 536 bytes of
+// texture payload before mipmaps.
+
+export const PAINT_MAP_RESOLUTION = 128;
+
+/** Deterministic 32-bit avalanche, local so this module imports nothing. */
+function paintHash(x, y, salt) {
+  let h = Math.imul(x + 0x9e3779b9, 0x85ebca6b) ^ 0;
+  h = Math.imul(h ^ (y + 0x165667b1), 0xc2b2ae35);
+  h = Math.imul(h ^ (salt | 0), 0x27d4eb2f);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+function paintFade(t) {
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/**
+ * Value noise on an integer lattice, exactly periodic in u with period 1 and
+ * in v with period 1, whatever `px` / `py` are. Separate axis periods are what
+ * lets a scuff be anisotropic WITHOUT breaking the tile seam: scaling the
+ * coordinate would change the period, scaling the lattice does not.
+ */
+function paintNoise(u, v, periodX, periodY, salt) {
+  // Integer lattice periods only: a fractional period is not periodic in [0,1)
+  // and would put a visible seam down every stripe in the city.
+  const px = Math.max(1, Math.round(periodX));
+  const py = Math.max(1, Math.round(periodY));
+  const x = u * px;
+  const y = v * py;
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = paintFade(x - ix);
+  const fy = paintFade(y - iy);
+  const x0 = ((ix % px) + px) % px;
+  const y0 = ((iy % py) + py) % py;
+  const x1 = (x0 + 1) % px;
+  const y1 = (y0 + 1) % py;
+  const n00 = paintHash(x0, y0, salt);
+  const n10 = paintHash(x1, y0, salt);
+  const n01 = paintHash(x0, y1, salt);
+  const n11 = paintHash(x1, y1, salt);
+  const a = n00 + (n10 - n00) * fx;
+  const b = n01 + (n11 - n01) * fx;
+  return a + (b - a) * fy;
+}
+
+function paintFbm(u, v, px, py, octaves, salt) {
+  let amp = 1;
+  let total = 0;
+  let norm = 0;
+  let ax = px;
+  let ay = py;
+  for (let o = 0; o < octaves; o += 1) {
+    total += amp * paintNoise(u, v, ax, ay, salt + o * 977);
+    norm += amp;
+    amp *= 0.5;
+    ax *= 2;
+    ay *= 2;
+  }
+  return norm > 0 ? total / norm : 0;
+}
+
+function srgbEncode(linear) {
+  const c = linear <= 0 ? 0 : linear >= 1 ? 1 : linear;
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055;
+}
+
+/**
+ * The paint tile as a linear-luminance multiplier field in [0,1], sampled at
+ * normalized tile coordinates. 1.0 is intact paint; low values are places the
+ * road is showing through. Exported so a verifier can integrate it without
+ * building a texture.
+ *
+ * Exactly periodic in both axes: `paintSurfaceValue(0, v)` and
+ * `paintSurfaceValue(1, v)` agree, which is what makes the tile seamless on a
+ * stripe that runs for tens of metres.
+ */
+export function paintSurfaceValue(u, v) {
+  // Wear blotches: two octave bands, folded so the thin areas are compact
+  // patches rather than an even fog of noise. Real paint fails in patches.
+  const blotch = paintFbm(u, v, 3, 3, 4, 0x51ed);
+  const coarse = paintFbm(u, v, 2, 2, 2, 0x2f19);
+  const field = blotch * 0.66 + coarse * 0.34;
+  // 0 over intact paint, rising to 1 in the middle of a thin patch.
+  const wearT = Math.min(1, Math.max(0, field - 0.560) / 0.230);
+  const wear = wearT * wearT * (3 - 2 * wearT);
+  // Scuff: a fine scrub stretched along u, stronger where paint is thin.
+  const scuff = paintFbm(u, v, 3, 22, 3, 0x7a11) - 0.5;
+  // Bead speckle: near-texel-scale sparkle from broadcast glass bead clusters.
+  const bead = paintNoise(u, v, PAINT_MAP_RESOLUTION / 2, PAINT_MAP_RESOLUTION / 2, 0x1d3b);
+  const beadFine = paintNoise(u, v, PAINT_MAP_RESOLUTION, PAINT_MAP_RESOLUTION, 0x6c07);
+  const speckle = (bead - 0.5) * 0.10 + (beadFine - 0.5) * 0.08;
+  // A bead that catches the light. Rare, bright, one texel wide.
+  const glint = beadFine > 0.955 ? 0.10 : 0;
+  const base = 1 + speckle + glint + scuff * 0.30 * (0.25 + wear);
+  const value = base * (1 - 0.80 * wear);
+  return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/**
+ * RGBA bytes for the paint tile, row-major, `PAINT_MAP_RESOLUTION` square.
+ * The channel values are sRGB-encoded because the texture is sampled as colour.
+ */
+export function buildPaintMapRGBA(resolution = PAINT_MAP_RESOLUTION) {
+  const n = Math.max(4, Math.round(resolution));
+  const data = new Uint8Array(n * n * 4);
+  let sumLinear = 0;
+  let minLinear = 1;
+  let maxLinear = 0;
+  for (let y = 0; y < n; y += 1) {
+    for (let x = 0; x < n; x += 1) {
+      const linear = paintSurfaceValue((x + 0.5) / n, (y + 0.5) / n);
+      sumLinear += linear;
+      if (linear < minLinear) minLinear = linear;
+      if (linear > maxLinear) maxLinear = linear;
+      // Intact paint is exactly neutral, so a texel at full value multiplies
+      // the palette tint by 1 and nothing else. Where the paint is thin what
+      // shows through is binder and road, which is warmer than the paint, so
+      // the tilt is applied in proportion to the wear and vanishes at 1.0.
+      const warmth = (1 - linear) * 0.12;
+      const byte = (c) => Math.max(0, Math.min(255, Math.round(srgbEncode(c) * 255)));
+      const i = (y * n + x) * 4;
+      data[i] = byte(linear * (1 + warmth * 0.5));
+      data[i + 1] = byte(linear);
+      data[i + 2] = byte(linear * (1 - warmth));
+      data[i + 3] = 255;
+    }
+  }
+  return {
+    data,
+    width: n,
+    height: n,
+    meanLinear: sumLinear / (n * n),
+    minLinear,
+    maxLinear,
+  };
+}
+
+/**
+ * Integrated statistics of the shipped tile, so the palette above can be read
+ * against the value the road actually renders: rendered paint = palette tint x
+ * this mean. Computed once, lazily, and frozen.
+ */
+let paintMapStats = null;
+export function getPaintMapStats() {
+  if (!paintMapStats) {
+    const image = buildPaintMapRGBA();
+    paintMapStats = Object.freeze({
+      resolution: image.width,
+      meanLinear: image.meanLinear,
+      minLinear: image.minLinear,
+      maxLinear: image.maxLinear,
+      bytes: image.data.length,
+    });
+  }
+  return paintMapStats;
+}
+
+let paintTexture = null;
+
+/**
+ * The shared paint albedo tile. One texture for the whole city; it tiles every
+ * `uvMetersPerRepeat.marking` metres of world, on the same world-XZ UVs the
+ * marking layer already bakes, so it is continuous across every stripe.
+ */
+export function getPaintMapTexture() {
+  if (paintTexture) return paintTexture;
+  const image = buildPaintMapRGBA();
+  const texture = new THREE.DataTexture(
+    image.data, image.width, image.height, THREE.RGBAFormat, THREE.UnsignedByteType,
+  );
+  texture.name = 'street-surface-v2:paint-tile';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  paintTexture = texture;
+  return paintTexture;
+}
+
+/** Drop the shared tile. Only a full teardown should call this. */
+export function disposePaintMapTexture() {
+  paintTexture?.dispose?.();
+  paintTexture = null;
+}
 
 // ---------------------------------------------------------------------------
 // small deterministic math helpers
@@ -366,6 +635,25 @@ function mixColor(a, b, t) {
 
 function srgbToLinear(c) {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/**
+ * Multiply a stored sRGB colour by a LINEAR factor.
+ *
+ * `scaleColor` scales the sRGB code value, which is not what "half as bright"
+ * means: scaling an sRGB code by 0.7 is a linear factor of 0.45, and scaling
+ * it by 0.5 is a linear factor of 0.22. Every place in this module that means
+ * "this much of the light the surface underneath reflects" - paint wear, tyre
+ * tracks - uses this instead, so the number in the source is the number the
+ * renderer produces.
+ */
+function scaleLinearColor(rgb, factor) {
+  const k = factor < 0 ? 0 : factor;
+  return [
+    clamp(srgbEncode(srgbToLinear(rgb[0]) * k), 0, 1),
+    clamp(srgbEncode(srgbToLinear(rgb[1]) * k), 0, 1),
+    clamp(srgbEncode(srgbToLinear(rgb[2]) * k), 0, 1),
+  ];
 }
 
 function perpCCW(u) {
@@ -706,18 +994,24 @@ export function planSegmentMarkings(segment, options = {}) {
   if (!(half >= o.minMarkedHalfWidth)) return lines;
   if (o.unmarkedSet.has(segment.highway)) return lines;
   const lanes = Math.max(1, Math.round(Number(segment.lanes) || 2));
-  const oneway = segment.oneway === true || segment.oneway === 'yes'
-    || segment.oneway === 1 || segment.oneway === '1'
-    || segment.oneway === 'increasing' || segment.oneway === 'decreasing';
+  const oneway = isOneway(segment);
+  // LINE WIDTH IS THE HIERARCHY THE PAINT CAN CARRY. The number and the colour
+  // of the lines are fixed by lane count and direction, so the only place the
+  // street's CLASS can show on the road surface is the width of the stroke - an
+  // arterial is restriped with a wider line than a residential block, and at
+  // eye level that difference is what separates a through route from a side
+  // street when the two meet. Rank 5 (secondary) and above get the wide stroke.
+  const rank = streetClassRank(segment.highway ?? segment.className);
+  const strokeScale = rank >= 6 ? 1.3 : rank >= 5 ? 1.15 : 1;
   const edgeU = Math.max(0.35, half - o.gutterWidth - 0.1);
-  lines.push({ role: 'edge', u: edgeU, width: o.edgeLineWidth, dashed: false, paint: 'white' });
-  lines.push({ role: 'edge', u: -edgeU, width: o.edgeLineWidth, dashed: false, paint: 'white' });
+  lines.push({ role: 'edge', u: edgeU, width: o.edgeLineWidth * strokeScale, dashed: false, paint: 'white' });
+  lines.push({ role: 'edge', u: -edgeU, width: o.edgeLineWidth * strokeScale, dashed: false, paint: 'white' });
   if (oneway) {
     for (let j = 1; j < lanes; j += 1) {
       lines.push({
         role: 'divider',
         u: -half + (width * j) / lanes,
-        width: o.laneLineWidth,
+        width: o.laneLineWidth * strokeScale,
         dashed: true,
         paint: 'white',
       });
@@ -725,23 +1019,107 @@ export function planSegmentMarkings(segment, options = {}) {
     return lines;
   }
   if (lanes >= 4) {
-    lines.push({ role: 'centre', u: o.centreLineGap / 2, width: o.centreLineWidth, dashed: false, paint: 'yellow' });
-    lines.push({ role: 'centre', u: -o.centreLineGap / 2, width: o.centreLineWidth, dashed: false, paint: 'yellow' });
+    lines.push({ role: 'centre', u: o.centreLineGap / 2, width: o.centreLineWidth * strokeScale, dashed: false, paint: 'yellow' });
+    lines.push({ role: 'centre', u: -o.centreLineGap / 2, width: o.centreLineWidth * strokeScale, dashed: false, paint: 'yellow' });
   } else {
-    lines.push({ role: 'centre', u: 0, width: o.centreLineWidth, dashed: false, paint: 'yellow' });
+    lines.push({ role: 'centre', u: 0, width: o.centreLineWidth * strokeScale, dashed: false, paint: 'yellow' });
   }
   const perSide = Math.max(1, Math.floor(lanes / 2));
   for (let j = 1; j < perSide; j += 1) {
     const u = (half * j) / perSide;
-    lines.push({ role: 'divider', u, width: o.laneLineWidth, dashed: true, paint: 'white' });
-    lines.push({ role: 'divider', u: -u, width: o.laneLineWidth, dashed: true, paint: 'white' });
+    lines.push({ role: 'divider', u, width: o.laneLineWidth * strokeScale, dashed: true, paint: 'white' });
+    lines.push({ role: 'divider', u: -u, width: o.laneLineWidth * strokeScale, dashed: true, paint: 'white' });
   }
   return lines;
+}
+
+/**
+ * ONE CROSSING FAMILY FOR THE WHOLE CITY (round 6). READ THIS BEFORE EDITING.
+ *
+ * Round 4 had two crossing generators with two different geometries: this
+ * module painted signalised nodes with `floor(usable / 0.8)` bars, and
+ * `src/render/passes/street-surface-detail.js` painted every other node with
+ * `floor(usable / 0.85)` bars over a band whose depth changed with the node's
+ * class. Both then rescaled the pitch to `usable / stripes`, so the ACTUAL bar
+ * spacing came out different on every approach: measured at the junction the
+ * hero cards stand on, the two 12.8 m legs got 14 bars at 0.871 m and the two
+ * 6.4 m legs got 6 bars at 0.967 m - one node, two pitches. From a camera
+ * standing in the box that is three or four bar fields at three or four angles
+ * with three or four spacings, which is exactly what four of the five round-4
+ * reviewers described.
+ *
+ * The pitch is now a CONSTANT. The bar count is whatever that constant fits
+ * between the two kerb insets, and the field is centred on the approach axis
+ * so the phase is symmetric about the centreline. Every crossing in the city
+ * is therefore the same family, and both emitters call this one function.
+ *
+ * @param {number} half  half the approach carriageway width, metres
+ * @param {object} o     resolved options
+ * @returns {{ pitch, width, stripes: Array<{v, v0, v1}> }}
+ */
+export function planCrossingStripes(half, o) {
+  const inset = o.crosswalkEdgeInset;
+  const width = o.crossingStripeWidth;
+  const pitch = Math.max(width + 0.15, o.crossingStripePitch);
+  const usable = Math.max(0, half * 2 - inset * 2);
+  const count = Math.max(o.crossingMinStripes, Math.floor((usable + (pitch - width)) / pitch));
+  const span = count * pitch - (pitch - width);
+  const stripes = [];
+  for (let i = 0; i < count; i += 1) {
+    const v = -span / 2 + width / 2 + i * pitch;
+    if (Math.abs(v) + width / 2 > half - inset + 1e-6) continue;
+    stripes.push({ v, v0: v - width / 2, v1: v + width / 2 });
+  }
+  return { pitch, width, stripes };
+}
+
+/**
+ * Band depth of a marked crossing, from the class of the busiest street at the
+ * node. Exported so the detail pass paints the same band this module does.
+ */
+export function crossingBandDepth(maxClassRank, o) {
+  const base = o?.crosswalkBandDepth ?? STREET_SURFACE_V2_DEFAULTS.crosswalkBandDepth;
+  if (maxClassRank >= 6) return base + 1.2;
+  if (maxClassRank >= 5) return base + 0.6;
+  return base;
+}
+
+/**
+ * Does a junction carry marked crossings and stop lines at all?
+ *
+ * The rule lives here, not in the presentation pass, because the SURFACE has
+ * to reserve the same zone the paint will occupy: the longitudinal lines have
+ * to stop where the crossing starts, and this module lays the longitudinal
+ * lines. Two readings of "does this node earn paint" would put the lane lines
+ * back under the zebra, which is the round-4 defect.
+ */
+export function nodeEarnsJunctionPaint(signalised, degree, maxClassRank, footwayLegs) {
+  if (signalised) return true;
+  if (!(degree >= 3)) return false;
+  if (!(maxClassRank >= 4)) return false;
+  return footwayLegs >= 3;
 }
 
 // ---------------------------------------------------------------------------
 // nodes and corners
 // ---------------------------------------------------------------------------
+
+/**
+ * The one-way test, in one place.
+ *
+ * The shipped San Francisco slice writes `oneway` as `'increasing'`,
+ * `'decreasing'` or `'both'`, not as a boolean. Round 4 had three different
+ * readings of that field in this module: `planSegmentMarkings` understood the
+ * directional strings, `makeApproach` did not, and `readSegmentContract` did.
+ * The consequence was visible: every approach in the city reported
+ * `oneway === false`, so a one-way street was given a half-width stop bar on
+ * the wrong half and a stop bar at the end traffic LEAVES by. One reading now.
+ */
+function isOneway(segment) {
+  const v = segment?.oneway;
+  return v === true || v === 'yes' || v === 1 || v === '1'
+    || v === 'increasing' || v === 'decreasing';
+}
 
 function sidewalkWidths(segment) {
   const fallback = Math.max(0, Number(segment.sidewalkW) || 0);
@@ -773,6 +1151,15 @@ function prepareSegments(city, o) {
       walks: sidewalkWidths(segment),
       trimStart: 0,
       trimEnd: 0,
+      // How much of each end the junction paint owns, so the longitudinal
+      // lines stop at the stop line instead of running under the crossing.
+      markingTrimStart: 0,
+      markingTrimEnd: 0,
+      // Arc-length spans this ribbon gives up to a higher-priority street it
+      // crosses with no junction between them. See `planCarriagewayYield`.
+      yieldSpans: [],
+      walkYieldSpans: { left: [], right: [] },
+      classRank: streetClassRank(segment.highway ?? segment.className),
       // The junction approach that owns each end, so the trim reconciliation
       // pass can write a corrected trim back into the approach the pad and the
       // curb ring are built from. Watertightness depends on those two numbers
@@ -790,8 +1177,7 @@ function makeApproach(entry, atStart) {
   const u = atStart
     ? edgeDir(points, 0)
     : { x: -edgeDir(points, last - 1).x, z: -edgeDir(points, last - 1).z };
-  const oneway = entry.segment.oneway === true || entry.segment.oneway === 'yes'
-    || entry.segment.oneway === 1 || entry.segment.oneway === '1';
+  const oneway = isOneway(entry.segment);
   return {
     entry,
     atStart,
@@ -996,15 +1382,50 @@ function arcStations(corner, o) {
   const delta = signedAngle(a1 - a0);
   const step = (o.cornerArcStepDeg * Math.PI) / 180;
   const count = clamp(Math.ceil(Math.abs(delta) / step), 2, 16);
-  const rampHalfAngle = Math.min(Math.abs(delta) * 0.34, (o.rampWidth / 2) / corner.radius);
+  // ONE RAMP PER CROSSING, NOT ONE RAMP PER CORNER (round 6).
+  //
+  // Round 4 cut a single kerb ramp at the MIDDLE of every corner return, on
+  // the corner bisector. The crossings are on the legs, so the ramp pointed
+  // 45 degrees into the middle of the intersection box and served neither of
+  // them: three of the five reviewers reported a tactile pad "with no
+  // alignment to any crossing", and one measured the pad sitting on a raised
+  // island with nothing under it. A real corner carries a perpendicular PAIR -
+  // one ramp at each end of the return, each square to the crossing on its own
+  // leg. The two ramps are therefore cut adjacent to the two tangent points,
+  // where the arc is still parallel to that leg's kerb line, with a short run
+  // of full-height kerb left at the tangent point for the flare to die into.
+  //
+  // A corner too tight to hold two ramps keeps the single mid-arc ramp, which
+  // is the real diagonal ramp a tight corner is built with.
+  const sweep = Math.abs(delta);
+  const rampHalfAngle = Math.min(sweep * 0.34, (o.rampWidth / 2) / corner.radius);
   const hasRamp = rampHalfAngle > 0.02;
   const sign = delta >= 0 ? 1 : -1;
-  const mid = a0 + delta / 2;
-  const rampLo = mid - rampHalfAngle * sign;
-  const rampHi = mid + rampHalfAngle * sign;
+  const flare = Math.min(sweep * 0.12, Math.max(0.24, o.rampRun * 0.25) / corner.radius);
+  const windows = [];
+  if (hasRamp) {
+    const pairSpan = 2 * (2 * rampHalfAngle + flare) + 0.5 * rampHalfAngle;
+    if (sweep >= pairSpan) {
+      for (const end of [0, 1]) {
+        const centre = end === 0
+          ? a0 + sign * (flare + rampHalfAngle)
+          : a0 + delta - sign * (flare + rampHalfAngle);
+        windows.push({
+          lo: Math.min(centre - rampHalfAngle * sign, centre + rampHalfAngle * sign),
+          hi: Math.max(centre - rampHalfAngle * sign, centre + rampHalfAngle * sign),
+        });
+      }
+    } else {
+      const mid = a0 + delta / 2;
+      windows.push({
+        lo: Math.min(mid - rampHalfAngle * sign, mid + rampHalfAngle * sign),
+        hi: Math.max(mid - rampHalfAngle * sign, mid + rampHalfAngle * sign),
+      });
+    }
+  }
   const angles = [];
   for (let i = 0; i <= count; i += 1) angles.push(a0 + (delta * i) / count);
-  if (hasRamp) angles.push(rampLo, rampHi);
+  for (const w of windows) angles.push(w.lo, w.hi);
   angles.sort((p, q) => (delta >= 0 ? p - q : q - p));
   const stations = [];
   for (const ang of angles) {
@@ -1020,7 +1441,11 @@ function arcStations(corner, o) {
   }
   return {
     stations,
-    ramp: hasRamp ? { lo: Math.min(rampLo, rampHi), hi: Math.max(rampLo, rampHi) } : null,
+    // `ramp` stays the first window so nothing that only reads one breaks;
+    // `ramps` is the real list and is what the curb ring and the detail pass's
+    // detectable-warning pads iterate.
+    ramp: windows[0] || null,
+    ramps: windows,
   };
 }
 
@@ -1043,9 +1468,44 @@ function emitSegment(entry, layers, o, ctx, stats) {
   // reconcileTrims() guarantees a run survives; only a genuinely sub-decimetre
   // source centreline lands here, and that carries no visible surface.
   if (s1 - s0 < 0.02) return;
-  const stations = buildStations(points, cum, s0, s1, o.maxStep);
+  let stations = buildStations(points, cum, s0, s1, o.maxStep);
   if (stations.length < 2) return;
-  stats.streetLengthMeters += s1 - s0;
+  // A ribbon that gives way to a busier street it crosses (see
+  // `planCarriagewayYield`) is cut ON the corridor boundary, so the boundary
+  // stations are spliced in before the strips are swept rather than the cut
+  // being snapped to the nearest 6 m cross-section.
+  {
+    const extra = [];
+    const cutLists = [entry.yieldSpans || []];
+    if (entry.walkYieldSpans) {
+      cutLists.push(entry.walkYieldSpans.left || [], entry.walkYieldSpans.right || []);
+    }
+    for (const list of cutLists) {
+      for (const [ya, yb] of list) {
+        for (const v of [ya, yb]) if (v > s0 + 1e-3 && v < s1 - 1e-3) extra.push(v);
+      }
+    }
+    if (extra.length) {
+      const merged = stations.concat(extra.map((v) => frameAt(points, cum, v, false)));
+      merged.sort((a, b) => a.s - b.s);
+      stations = [];
+      for (const st of merged) {
+        const last = stations[stations.length - 1];
+        if (last && Math.abs(last.s - st.s) < 1e-4) continue;
+        stations.push(st);
+      }
+    }
+  }
+  const spanKeep = [];
+  let emittedRun = 0;
+  for (let i = 0; i < stations.length - 1; i += 1) {
+    const keep = !inYieldSpan(entry, (stations[i].s + stations[i + 1].s) / 2);
+    spanKeep.push(keep);
+    if (keep) emittedRun += stations[i + 1].s - stations[i].s;
+  }
+  if (!(emittedRun > 0.02)) return;
+  stats.streetLengthMeters += emittedRun;
+  stats.yieldedMeters += (s1 - s0) - emittedRun;
 
   const palette = o.colors;
   const asphaltHex = palette.asphalt[entry.segment.highway] || palette.asphalt.default;
@@ -1086,6 +1546,7 @@ function emitSegment(entry, layers, o, ctx, stats) {
 
   // Cambered carriageway + gutter pans.
   for (let i = 0; i < stations.length - 1; i += 1) {
+    if (!spanKeep[i]) continue;
     const A = stations[i];
     const B = stations[i + 1];
     for (let k = 0; k < offs.length - 1; k += 1) {
@@ -1107,7 +1568,20 @@ function emitSegment(entry, layers, o, ctx, stats) {
   for (const side of [1, -1]) {
     const walk = side > 0 ? entry.walks.left : entry.walks.right;
     if (!(walk >= o.minSidewalkWidth)) continue;
+    // The stretches of this side's kerb and footway that lie inside a busier
+    // street's carriageway. See `planCarriagewayYield`: concrete does not lie
+    // flat on somebody else's road.
+    const walkGiven = (entry.walkYieldSpans
+      && entry.walkYieldSpans[side > 0 ? 'left' : 'right']) || [];
+    const walkDropped = (sv) => {
+      for (let k = 0; k < walkGiven.length; k += 1) {
+        if (sv >= walkGiven[k][0] && sv <= walkGiven[k][1]) return true;
+      }
+      return false;
+    };
     for (let i = 0; i < stations.length - 1; i += 1) {
+      if (!spanKeep[i]) continue;
+      if (walkDropped((stations[i].s + stations[i + 1].s) / 2)) continue;
       const A = stations[i];
       const B = stations[i + 1];
       const dA = datums[i];
@@ -1168,13 +1642,28 @@ function emitSegment(entry, layers, o, ctx, stats) {
     }
   }
 
-  // Paint.
-  const lines = planSegmentMarkings(entry.segment, o);
+  // Paint. THE LONGITUDINAL LINES STOP WHERE THE JUNCTION PAINT STARTS.
+  // `markingTrimStart/End` were reserved by `planNodePaint` from the same
+  // trims and the same band depth the crossing is painted with, so a zebra can
+  // never be laid over a lane line again, and the intersection box is left
+  // clean.
+  const hasStartNode = Boolean(entry.approachStart);
+  const hasEndNode = Boolean(entry.approachEnd);
+  const mStart = Math.max(s0, entry.markingTrimStart || 0);
+  const mEnd = Math.min(s1, length - (entry.markingTrimEnd || 0));
+  const lines = mEnd - mStart >= 1.0 ? planSegmentMarkings(entry.segment, o) : [];
   stats.markingLines += lines.length;
   const white = hexToSrgb(palette.markingWhite);
   const yellow = hexToSrgb(palette.markingYellow);
+  // A street is repainted as a street, so its lines share an age; the edge
+  // line then wears further than the centre line because it is the one that
+  // sits in the grime at the gutter lip and under parked wheels, while a lane
+  // divider lives BETWEEN the two wheel paths and is the last thing to go.
+  const segAge = ((hash32(`repaint:${entry.segment.id}`) % 1000) / 1000) ** 1.3;
   for (const line of lines) {
-    const color = line.paint === 'yellow' ? yellow : white;
+    const base = line.paint === 'yellow' ? yellow : white;
+    const exposure = line.role === 'edge' ? 1 : line.role === 'centre' ? 0.7 : 0.5;
+    const color = scaleLinearColor(base, clamp(1 - 0.5 * segAge * exposure, 0.3, 1));
     if (line.dashed) stats.dashedLines += 1;
     const emitSpan = (fa, fb) => {
       const da = ctx.datum(fa.x, fa.z);
@@ -1189,17 +1678,41 @@ function emitSegment(entry, layers, o, ctx, stats) {
         color, UP);
     };
     if (!line.dashed) {
-      for (let i = 0; i < stations.length - 1; i += 1) emitSpan(stations[i], stations[i + 1]);
-      stats.markingQuads += stations.length - 1;
+      let solids = 0;
+      for (let i = 0; i < stations.length - 1; i += 1) {
+        if (!spanKeep[i]) continue;
+        const a = Math.max(stations[i].s, mStart);
+        const b = Math.min(stations[i + 1].s, mEnd);
+        if (b - a < 0.05) continue;
+        emitSpan(
+          Math.abs(a - stations[i].s) < 1e-6 ? stations[i] : frameAt(points, cum, a, false),
+          Math.abs(b - stations[i + 1].s) < 1e-6 ? stations[i + 1] : frameAt(points, cum, b, false),
+        );
+        solids += 1;
+      }
+      stats.markingQuads += solids;
       continue;
     }
+    // A DASHED DIVIDER GOES SOLID ON THE APPROACH. Lane changing is prohibited
+    // for the last stretch before a junction, and the solid run is what makes
+    // the approach read as an approach instead of as dashes that stop for no
+    // reason. Only an end that actually has a node gets one.
     const cycle = o.dashMark + o.dashGap;
     let dashes = 0;
-    for (let s = s0; s < s1 - 0.4; s += cycle) {
-      const e = Math.min(s + o.dashMark, s1);
+    const solidLo = hasStartNode ? Math.min(mStart + o.markingSolidApproach, mEnd) : mStart;
+    const solidHi = hasEndNode ? Math.max(mEnd - o.markingSolidApproach, mStart) : mEnd;
+    const emitRange = (a, b) => {
+      if (b - a < 0.05) return false;
+      if (inYieldSpan(entry, (a + b) / 2)) return false;
+      emitSpan(frameAt(points, cum, a, false), frameAt(points, cum, b, false));
+      return true;
+    };
+    if (hasStartNode && emitRange(mStart, solidLo)) dashes += 1;
+    if (hasEndNode && emitRange(solidHi, mEnd)) dashes += 1;
+    for (let s = solidLo; s < solidHi - 0.4; s += cycle) {
+      const e = Math.min(s + o.dashMark, solidHi);
       if (e - s < 0.4) continue;
-      emitSpan(frameAt(points, cum, s, false), frameAt(points, cum, e, false));
-      dashes += 1;
+      if (emitRange(s, e)) dashes += 1;
     }
     stats.markingQuads += dashes;
   }
@@ -1320,6 +1833,378 @@ function reconcileTrims(entries) {
     }
     if (entry.approachStart) entry.approachStart.trim = entry.trimStart;
     if (entry.approachEnd) entry.approachEnd.trim = entry.trimEnd;
+  }
+}
+
+/**
+ * THE DRAWN CARRIAGEWAY MUST NOT LAP ITSELF (round 6). READ THIS BEFORE EDITING.
+ *
+ * Two authoritative centrelines can cross without an intersection record
+ * between them - an alley crossing an arterial, a service road running through
+ * a boulevard, a residential street that OSM traces straight across a trunk
+ * road. `collectNodes` only ever joins ways that SHARE AN ENDPOINT, so at such
+ * a crossing neither ribbon is trimmed and both are drawn in full, one over
+ * the other.
+ *
+ * Measured on the shipped slice before this pass existed:
+ *
+ *   * 2.35% of the drawn carriageway carried two asphalt surfaces at once,
+ *     18 344 samples over 899 clusters, worst vertical step 225 mm;
+ *   * 2.97% of the drawn carriageway ALSO carried a footway or plaza surface,
+ *     36 188 samples over 1073 clusters, and 90% of those were within 160 mm
+ *     of the asphalt under them - a concrete slab lying flat on a road with no
+ *     kerb face and no height step between them, which is what three of the
+ *     five round-4 reviewers reported as "the two planes are coplanar" and "a
+ *     stair-stepped zigzag seam";
+ *   * the vehicle-grounding verifier measured 353 of 544 bodies straddling a
+ *     step in the asphalt with a 72 mm worst case, and the traffic mirror's
+ *     own datum was out by 71 mm at the same places.
+ *
+ * The construction rule is the one a real street follows: WHERE TWO PAVED
+ * CORRIDORS OVERLAP AND NOTHING JOINS THEM, THE BUSIER STREET IS CONTINUOUS
+ * AND THE OTHER ONE STOPS AT ITS EDGE. Priority is the contract's own class
+ * rank, then carriageway width, then id - so the answer never depends on the
+ * order the source happened to list the ways in.
+ *
+ * The loser's cross-section - carriageway, gutter, kerb, footway, verge and
+ * paint - is dropped over the arc-length span where its centreline lies inside
+ * the winner's PAVED corridor (half + footway), and the cut is bisected onto
+ * the real boundary rather than snapped to the nearest 6 m station. The
+ * footprint stays covered, because the winner paves it.
+ *
+ * WHAT THIS MOVES. `carriagewaySurfaceY` still returns the same number for a
+ * given segment; what changes is which segment's surface is actually DRAWN at
+ * a crossing. Anything that grounds by "nearest centreline wins" rather than
+ * by sampling the drawn triangles will now disagree with the frame at these
+ * 899 sites - src/citygen/traffic.js's `createStreetSurfaceSampler` picks the
+ * nearest centreline and is the one to watch.
+ */
+function planCarriagewayYield(entries, nodes, o) {
+  if (o.carriagewayYield === false) return { yielded: 0, yieldedMeters: 0 };
+  // Which segments actually MEET this one at a junction. Two streets that meet
+  // are resolved by the trims and the pad; only two that merely overlap are
+  // this pass's business.
+  const neighbours = new Map();
+  for (const entry of entries) neighbours.set(entry.segment.id, new Set());
+  for (const node of nodes || []) {
+    for (const a of node.approaches) {
+      const set = neighbours.get(a.entry.segment.id);
+      if (!set) continue;
+      for (const b of node.approaches) if (b !== a) set.add(b.entry.segment.id);
+    }
+  }
+  const order = entries.slice().sort((a, b) => (
+    (b.classRank - a.classRank)
+    || (b.half - a.half)
+    || String(a.segment.id).localeCompare(String(b.segment.id))
+  ));
+  // A corridor index that reports WHICH corridor covers a point, so a span can
+  // be checked against the segment that actually took it.
+  const cell = 24;
+  const buckets = new Map();
+  const edges = [];
+  const addCorridor = (ax, az, bx, bz, half, id) => {
+    const index = edges.push({ ax, az, bx, bz, half, id }) - 1;
+    const minX = Math.min(ax, bx) - half;
+    const maxX = Math.max(ax, bx) + half;
+    const minZ = Math.min(az, bz) - half;
+    const maxZ = Math.max(az, bz) + half;
+    for (let gz = Math.floor(minZ / cell); gz <= Math.floor(maxZ / cell); gz += 1) {
+      for (let gx = Math.floor(minX / cell); gx <= Math.floor(maxX / cell); gx += 1) {
+        const key = `${gx}:${gz}`;
+        const list = buckets.get(key);
+        if (list) list.push(index); else buckets.set(key, [index]);
+      }
+    }
+  };
+  const coveredBy = (x, z, shrink) => {
+    const gx = Math.floor(x / cell);
+    const gz = Math.floor(z / cell);
+    let best = null;
+    let bestDepth = 0;
+    for (let j = -1; j <= 1; j += 1) {
+      for (let i = -1; i <= 1; i += 1) {
+        for (const index of buckets.get(`${gx + i}:${gz + j}`) || []) {
+          const e = edges[index];
+          const dx = e.bx - e.ax;
+          const dz = e.bz - e.az;
+          const len2 = dx * dx + dz * dz;
+          let t = len2 > 1e-9 ? ((x - e.ax) * dx + (z - e.az) * dz) / len2 : 0;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const depth = (e.half - shrink) - Math.hypot(x - (e.ax + dx * t), z - (e.az + dz * t));
+          if (depth >= 0 && depth > bestDepth) { bestDepth = depth; best = e.id; }
+        }
+      }
+    }
+    return best;
+  };
+  // A SECOND INDEX, CARRIAGEWAY ONLY. The footway rule below is a different
+  // question from the ribbon rule above and needs a different corridor: "is
+  // this concrete lying on somebody's ROAD", not "is this ribbon inside
+  // somebody's paved corridor".
+  const roadCell = 24;
+  const roadBuckets = new Map();
+  const roadEdges = [];
+  const addRoadway = (ax, az, bx, bz, half, owner, arc0) => {
+    const index = roadEdges.push({ ax, az, bx, bz, half, owner, arc0 }) - 1;
+    const minX = Math.min(ax, bx) - half;
+    const maxX = Math.max(ax, bx) + half;
+    const minZ = Math.min(az, bz) - half;
+    const maxZ = Math.max(az, bz) + half;
+    for (let gz = Math.floor(minZ / roadCell); gz <= Math.floor(maxZ / roadCell); gz += 1) {
+      for (let gx = Math.floor(minX / roadCell); gx <= Math.floor(maxX / roadCell); gx += 1) {
+        const key = `${gx}:${gz}`;
+        const list = roadBuckets.get(key);
+        if (list) list.push(index); else roadBuckets.set(key, [index]);
+      }
+    }
+  };
+  const onRoadway = (x, z) => {
+    const gx = Math.floor(x / roadCell);
+    const gz = Math.floor(z / roadCell);
+    for (let j = -1; j <= 1; j += 1) {
+      for (let i = -1; i <= 1; i += 1) {
+        for (const index of roadBuckets.get(`${gx + i}:${gz + j}`) || []) {
+          const e = roadEdges[index];
+          const dx = e.bx - e.ax;
+          const dz = e.bz - e.az;
+          const len2 = dx * dx + dz * dz;
+          const raw = len2 > 1e-9 ? ((x - e.ax) * dx + (z - e.az) * dz) / len2 : 0;
+          const t = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+          // A margin inside the kerb line, not the kerb line itself: the drawn
+          // carriageway edge is a chord between cross-sections and a mitred
+          // frame moves it again at a bend, so a footway is only dropped where
+          // it is WELL inside the other street's road rather than tangent to
+          // it. Measured on the shipped slice, this is the difference between
+          // a coverage bound met by 0.002 points and one met by 0.03.
+          if (Math.hypot(x - (e.ax + dx * t), z - (e.az + dz * t)) > e.half - 0.35) continue;
+          // ...AND THAT ROAD HAS TO ACTUALLY BE DRAWN HERE. A corridor is a
+          // nominal band round a centreline; the ribbon inside it stops at
+          // every junction trim and at every stretch the ribbon rule already
+          // gave away. Dropping a footway over a stretch of road that is not
+          // there is how this rule would open a hole instead of closing a
+          // seam, so the winner's own trims and yield spans are checked before
+          // its cover counts.
+          const owner = e.owner;
+          if (!owner) return true;
+          // The UNCLAMPED projection, so a point that sits past the end of the
+          // polyline lands outside the drawn arc range and is correctly read
+          // as not covered. Clamping here is what made a corner beyond a
+          // ribbon's own end look paved.
+          const station = e.arc0 + Math.sqrt(len2) * raw;
+          if (station < owner.trimStart - 0.05) continue;
+          if (station > owner.length - owner.trimEnd + 0.05) continue;
+          if (inYieldSpan(owner, station)) continue;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  let yielded = 0;
+  let yieldedMeters = 0;
+  for (const entry of order) {
+    const reach = entry.half + Math.max(entry.walks.left, entry.walks.right);
+    // THE CUT IS PULLED IN BY THE LOSER'S OWN PAVED HALF-REACH, AND THAT IS
+    // WHAT KEEPS THE FOOTPRINT WATERTIGHT. The cut runs across the loser's
+    // cross-section; the boundary it is cut at runs along the winner's edge.
+    // At an oblique crossing those two lines are not parallel, so a cut taken
+    // exactly on the winner's paved edge removes a wedge of the loser the
+    // winner does not pave - a hole. Pulling the test in by a fraction of the
+    // loser's own reach keeps the removed area inside pavement the winner is
+    // laying anyway. `yieldClearFraction` is that fraction: 1 removes only
+    // what is certainly covered, 0 removes everything that overlaps and opens
+    // holes at skew crossings. Measured on the shipped slice, 0.4 is the
+    // largest value that keeps the real-slice coverage bound and leaves no
+    // uncovered sample further than 4 m from real pavement.
+    const clear = reach * clamp(Number(o.yieldClearFraction) ?? 1, 0, 2);
+    const at = (s) => frameAt(entry.points, entry.cum, clamp(s, 0, entry.length), false);
+    const spans = [];
+    const probeStep = Math.max(0.75, Math.min(2, entry.half + 0.5));
+    let runStart = -1;
+    let prevId = null;
+    for (let s = 0; s <= entry.length + 1e-6; s += probeStep) {
+      const p = Math.min(s, entry.length);
+      const f = at(p);
+      const id = coveredBy(f.x, f.z, clear);
+      if (id && !prevId) runStart = p;
+      if (!id && prevId) { spans.push([runStart, p, prevId]); runStart = -1; }
+      prevId = id;
+      if (p >= entry.length) break;
+    }
+    if (prevId && runStart >= 0) spans.push([runStart, entry.length, prevId]);
+    const refine = (lo, hi, wantCovered) => {
+      let a = lo;
+      let b = hi;
+      for (let i = 0; i < 12; i += 1) {
+        const mid = (a + b) / 2;
+        const f = at(mid);
+        if (Boolean(coveredBy(f.x, f.z, clear)) === wantCovered) b = mid; else a = mid;
+      }
+      return (a + b) / 2;
+    };
+    for (const span of spans) {
+      if (span[0] > 0) span[0] = refine(Math.max(0, span[0] - probeStep), span[0], true);
+      if (span[1] < entry.length) span[1] = refine(span[1], Math.min(entry.length, span[1] + probeStep), false);
+    }
+    const s0 = entry.trimStart;
+    const s1 = entry.length - entry.trimEnd;
+    const mine = neighbours.get(entry.segment.id) || new Set();
+    entry.yieldSpans = spans
+      .filter(([a, b, id]) => {
+        if (b - a < 1.0) return false;
+        if (b <= s0 + 0.25 || a >= s1 - 0.25) return false;
+        // A span that stops short of both ends of the centreline is a genuine
+        // mid-block crossing: nothing at either end can be paving it.
+        if (a > 0.25 && b < entry.length - 0.25) return true;
+        // A span that runs out to an end is only this pass's business when the
+        // covering street is not one this segment MEETS there. Where they do
+        // meet, the node's trims and its pad own the geometry and cutting here
+        // would remove ribbon the pad never reaches.
+        //
+        // MEASURED LIMIT OF THIS RULE. The remaining overlap on the shipped
+        // slice is a DUPLICATE TRACING: a 3.2 m transit way drawn along the
+        // whole length of a 12.8 m street and joined to it at a node at each
+        // end (sf-seg-1135 / sf-seg-1136 / sf-seg-1137 is the worst of them).
+        // Removing those was tried and rejected: the coverage sampler expects
+        // every source centreline's own band to be paved, and the duplicate's
+        // footway band reaches past the host street's pavement, so cutting it
+        // opened uncovered ground more than 4 m from any pavement. Resolving a
+        // duplicate centreline is a MAP-source question, not a presentation
+        // one; this module will not delete a way the source insists exists.
+        return !mine.has(id);
+      })
+      .map(([a, b]) => [a, b]);
+    const kept = entry.yieldSpans;
+    if (kept.length) {
+      yielded += 1;
+      for (const [a, b] of kept) yieldedMeters += Math.max(0, Math.min(b, s1) - Math.max(a, s0));
+    }
+    // NO FOOTWAY LIES FLAT ON SOMEBODY ELSE'S ROAD (round 6).
+    //
+    // The ribbon rule above cannot take out every overlap without opening
+    // holes, and what survives it is the case the reviewers actually named:
+    // measured before this rule, 2.97% of the drawn carriageway also carried a
+    // concrete footway or plaza surface, and 90% of those samples were within
+    // 160 mm of the asphalt under them - a slab lying on a road with no kerb
+    // face and no height step, read by three of the five round-4 reviewers as
+    // "the two planes are coplanar" and "a stair-stepped zigzag seam".
+    //
+    // A footway strip that lies inside a busier street's CARRIAGEWAY is
+    // dropped. This one is watertight by construction and needs no pull-in:
+    // the removed strip is inside a carriageway that is being drawn anyway, so
+    // the same square metre is still paved - which is also why the coverage
+    // sampler, whose footway probe is exactly the offset tested here, cannot
+    // lose a sample to it.
+    for (const side of [1, -1]) {
+      const walk = side > 0 ? entry.walks.left : entry.walks.right;
+      const spansW = [];
+      if (walk >= o.minSidewalkWidth) {
+        const lateral = side * (entry.half + walk * 0.5);
+        const probeW = (sv) => {
+          const f = frameAt(entry.points, entry.cum, clamp(sv, 0, entry.length), false);
+          return onRoadway(f.x + f.nx * lateral * f.miter, f.z + f.nz * lateral * f.miter);
+        };
+        let runW = -1;
+        let prevW = false;
+        for (let sv = 0; sv <= entry.length + 1e-6; sv += probeStep) {
+          const pv = Math.min(sv, entry.length);
+          const hit = probeW(pv);
+          if (hit && !prevW) runW = pv;
+          if (!hit && prevW) { spansW.push([runW, pv]); runW = -1; }
+          prevW = hit;
+          if (pv >= entry.length) break;
+        }
+        if (prevW && runW >= 0) spansW.push([runW, entry.length]);
+        const refineW = (lo, hi, want) => {
+          let a = lo;
+          let b = hi;
+          for (let i = 0; i < 12; i += 1) {
+            const mid = (a + b) / 2;
+            if (probeW(mid) === want) b = mid; else a = mid;
+          }
+          return (a + b) / 2;
+        };
+        for (const span of spansW) {
+          if (span[0] > 0) span[0] = refineW(Math.max(0, span[0] - probeStep), span[0], true);
+          if (span[1] < entry.length) span[1] = refineW(span[1], Math.min(entry.length, span[1] + probeStep), false);
+        }
+      }
+      entry.walkYieldSpans[side > 0 ? 'left' : 'right'] = spansW.filter(([a, b]) => b - a >= 0.5);
+    }
+
+    for (let i = 0; i < entry.points.length - 1; i += 1) {
+      const a = entry.points[i];
+      const b = entry.points[i + 1];
+      addRoadway(a.x, a.z, b.x, b.z, entry.half, entry, entry.cum[i]);
+    }
+
+    // A WINNER CLAIMS ONLY WHAT IT CERTAINLY PAVES. The corridor this segment
+    // offers as cover is its carriageway plus the NARROWER of its two
+    // footways, because the wider side is the only one that would be claiming
+    // pavement the other side does not have.
+    const cover = entry.half + Math.max(0,
+      Math.min(entry.walks.left, entry.walks.right) - CORNER_CLOSE_MARGIN);
+    for (let i = 0; i < entry.points.length - 1; i += 1) {
+      const a = entry.points[i];
+      const b = entry.points[i + 1];
+      addCorridor(a.x, a.z, b.x, b.z, cover, entry.segment.id);
+    }
+  }
+  return { yielded, yieldedMeters };
+}
+
+/** Is arc length `s` inside one of the spans this ribbon gave away? */
+function inYieldSpan(entry, s) {
+  const spans = entry.yieldSpans;
+  if (!spans || !spans.length) return false;
+  for (let i = 0; i < spans.length; i += 1) {
+    if (s >= spans[i][0] && s <= spans[i][1]) return true;
+  }
+  return false;
+}
+
+/**
+ * Pass 2b: reserve the stretch of every approach that junction paint owns, so
+ * the longitudinal markings can stop at it.
+ *
+ * Runs after `reconcileTrims`, because the zone is measured from the FINAL
+ * trim, and before any geometry is emitted, because `emitSegment` lays the
+ * lane lines. Writes:
+ *
+ *   node.earnsPaint          - one reading of "this junction is marked",
+ *                              shared with the detail pass through
+ *                              `nodeEarnsJunctionPaint`;
+ *   node.bandDepth           - the crossing band depth for the whole node, so
+ *                              four approaches cannot paint four depths;
+ *   app.paintReach           - metres from the node the junction paint owns;
+ *   entry.markingTrimStart/End - what `emitSegment` must keep clear.
+ */
+function planNodePaint(node, o) {
+  const approaches = node.approaches;
+  let maxRank = 0;
+  let footwayLegs = 0;
+  for (const app of approaches) {
+    const rank = streetClassRank(app.entry.segment.highway ?? app.entry.segment.className);
+    app.classRank = rank;
+    if (rank > maxRank) maxRank = rank;
+    if (rank >= 3 && Math.max(app.widthCCW, app.widthCW) >= o.minSidewalkWidth) footwayLegs += 1;
+  }
+  const signalised = node.signalId !== null && node.signalId !== undefined;
+  node.maxClassRank = maxRank;
+  node.earnsPaint = nodeEarnsJunctionPaint(signalised, approaches.length, maxRank, footwayLegs);
+  node.bandDepth = crossingBandDepth(maxRank, o);
+  for (const app of approaches) {
+    // With paint: the pad edge, the crossing, and the gap in front of the stop
+    // bar. Without: a short unmarked box only, so a bare node still reads as a
+    // junction rather than as lane lines running into a blank plate.
+    const reach = node.earnsPaint
+      ? app.trim + o.crosswalkClearance + node.bandDepth + o.stopBarClearance
+      : app.trim + o.markingBoxClearance;
+    app.paintReach = reach;
+    const entry = app.entry;
+    if (app.atStart) entry.markingTrimStart = Math.max(entry.markingTrimStart || 0, reach);
+    else entry.markingTrimEnd = Math.max(entry.markingTrimEnd || 0, reach);
   }
 }
 
@@ -1471,6 +2356,7 @@ function finaliseJunction(node, o, stats) {
     const endStation = approachCurbStation(B, false, o);
     const stations = [startStation];
     let ramp = null;
+    let ramps = [];
     if (corner) {
       const arc = arcStations(corner, o);
       // Footway width ACROSS THE FILLET.
@@ -1499,14 +2385,77 @@ function finaliseJunction(node, o, stats) {
         stations.push({ ...st, walk: Math.min(walk, reachCap) });
       }
       ramp = arc.ramp;
+      ramps = arc.ramps || (arc.ramp ? [arc.ramp] : []);
       stats.corners += 1;
     } else {
       for (const st of chordPath(node.position, A, B, o, startStation, endStation)) stations.push(st);
       stats.cornerChords += 1;
     }
     stations.push(endStation);
-    node.paths.push({ stations, ramp });
+    node.paths.push({ stations, ramp, ramps });
   }
+}
+
+/**
+ * THE JUNCTION'S DATUM, TAKEN THE WAY THE RIBBON TAKES IT (round 7).
+ *
+ * `emitSegment` sweeps a whole cross-section - crown, gutter pan, kerb face,
+ * kerb top, footway, bank - from ONE datum per CENTRELINE station:
+ *
+ *     const datums = stations.map((st) => ctx.datum(st.x, st.z));
+ *
+ * The junction used to take a datum PER VERTEX, at the vertex's own position:
+ * `crossSectionY(ctx.datum(x, z), off, ...)` on the pad boundary,
+ * `ctx.datum(st.x, st.z)` on every corner station and again inside
+ * `emitCurbRing`. On a cross-grade those are two different surfaces, and they
+ * part by (terrain cross-grade) x (lateral offset) at the exact vertex the pad
+ * and the ribbon are supposed to share. Measured on the street-life fixture
+ * before this change, INSIDE A SINGLE LAYER so no other surface can explain
+ * it: a 246.8 mm step in the sidewalk over 0.10 m of ground at
+ * (-328.3, -127.10) and a 239.8 mm step in the carriageway at (-326.0,
+ * -127.10) - 0.06 cross-grade x 4.11 m lateral. The same street's carriageway
+ * sampled ON the centreline through the same node stepped 0.4 mm.
+ *
+ * This returns the datum every part of one node is swept from:
+ *
+ *   * `approach[i]` - the datum of approach i's TRIMMED END FRAME, i.e. the
+ *     identical number `emitSegment` opens that ribbon's first (or closes its
+ *     last) cross-section with. Every pad-boundary vertex of that mouth and
+ *     both curb stations of the two paths that meet it use it, so the pad, the
+ *     curb ring and the ribbon share vertices by construction rather than by
+ *     luck.
+ *   * `path[i]` - one datum per station of corner path i, blended by
+ *     CHORD LENGTH along the path from approach i's datum to approach
+ *     i+1's. It is therefore exact at both ends (where the ring meets a
+ *     ribbon) and smooth in between, which is what a real corner return is:
+ *     the surface warps across the node instead of stepping.
+ *
+ * WHAT WOULD MAKE THIS WRONG. If `approachEndFrame` ever stopped being the
+ * frame `buildStations` opens the ribbon on - a different arc length, a
+ * different miter flag - the pad would part from the ribbon again by the
+ * difference. `verify:street-surface-v2` measures that joint directly on the
+ * drawn triangles; it does not model it.
+ */
+function junctionDatums(node, ctx) {
+  const approaches = node.approaches;
+  const approach = approaches.map((app) => {
+    const frame = approachEndFrame(app);
+    return ctx.datum(frame.x, frame.z);
+  });
+  const path = node.paths.map((p, i) => {
+    const stations = p.stations;
+    const a = approach[i];
+    const b = approach[(i + 1) % approaches.length];
+    let run = 0;
+    const cum = [0];
+    for (let k = 1; k < stations.length; k += 1) {
+      run += Math.hypot(stations[k].x - stations[k - 1].x, stations[k].z - stations[k - 1].z);
+      cum.push(run);
+    }
+    if (!(run > 1e-6)) return cum.map(() => a);
+    return cum.map((c) => a + (b - a) * (c / run));
+  });
+  return { approach, path };
 }
 
 /** Pass 4: pad, curb ring, kerb ramps, crosswalks, stop bars. */
@@ -1515,6 +2464,7 @@ function emitJunction(node, layers, o, ctx, stats) {
   const approaches = node.approaches;
   const count = approaches.length;
   const maxHalf = Math.max(...approaches.map((a) => a.half));
+  const datums = junctionDatums(node, ctx);
 
   // Junction pad. The boundary is the closed curb line of the whole node:
   // every approach's full trimmed cross-section (so the pad shares vertices
@@ -1531,6 +2481,8 @@ function emitJunction(node, layers, o, ctx, stats) {
     const side = frameSideCCW(app);
     const offs = sectionOffsets(app.half, o);
     const gutterStart = Math.max(0, app.half - o.gutterWidth);
+    // One datum for this whole mouth: the ribbon's own end-station datum.
+    const datum = datums.approach[i];
     for (const off of offs) {
       const u = side * off;
       const x = frame.x + frame.nx * u * frame.miter;
@@ -1540,18 +2492,23 @@ function emitJunction(node, layers, o, ctx, stats) {
       boundary.push({
         x,
         z,
-        y: crossSectionY(ctx.datum(x, z), off, app.half, o),
+        datum,
+        y: crossSectionY(datum, off, app.half, o),
         in: { x: -sign * side * frame.nx, z: -sign * side * frame.nz },
         run: edge ? (app.half - gutterStart) * frame.miter : 0,
         lipOff: gutterStart,
         half: app.half,
       });
     }
-    for (const st of node.paths[i].stations.slice(1, -1)) {
+    const stations = node.paths[i].stations;
+    const pathDatum = datums.path[i];
+    for (let k = 1; k < stations.length - 1; k += 1) {
+      const st = stations[k];
       boundary.push({
         x: st.x,
         z: st.z,
-        y: ctx.datum(st.x, st.z) - o.gutterDepth,
+        datum: pathDatum[k],
+        y: pathDatum[k] - o.gutterDepth,
         in: { x: -st.out.x, z: -st.out.z },
         run: o.gutterWidth,
         lipOff: null,
@@ -1564,18 +2521,27 @@ function emitJunction(node, layers, o, ctx, stats) {
   const gutterColor = hexToSrgb(palette.gutter);
   const lipColor = mixColor(junctionColor, gutterColor, 0.45);
   const apexDatum = ctx.datum(node.position.x, node.position.z);
-  const apex = { x: node.position.x, y: apexDatum + o.crossSlope * maxHalf * 0.6, z: node.position.z };
+  // ONE CROWN RULE FOR THE WHOLE STREET (round 7). A ribbon crowns its
+  // centreline at `crossSlope * half` above its datum; the pad apex used to be
+  // crowned at `crossSlope * maxHalf * 0.6`, i.e. deliberately 40% short. The
+  // pad and the ribbon it opens into therefore disagreed by
+  // `crossSlope * half * 0.4` at the node - 51 mm modelled on the fixture's
+  // 12.8 m avenue, and 42.5 mm measured under a car standing 0.56 m from a
+  // node. The apex now carries the crown of the widest approach, which is the
+  // crown a junction is really graded to: the major road runs through and the
+  // minor road warps to meet it.
+  const apex = { x: node.position.x, y: apexDatum + o.crossSlope * maxHalf, z: node.position.z };
   const lip = boundary.map((b) => {
     if (!(b.run > 1e-6)) return { x: b.x, y: b.y, z: b.z };
-    const x = b.x + b.in.x * b.run;
-    const z = b.z + b.in.z * b.run;
-    const datum = ctx.datum(x, z);
     return {
-      x,
-      z,
+      x: b.x + b.in.x * b.run,
+      z: b.z + b.in.z * b.run,
+      // The gutter lip is `crossSlope * gutterWidth` above the datum on every
+      // cross-section, whatever the half width, so the corner and the mouth
+      // reach the same lip height from the same datum.
       y: b.lipOff === null
-        ? datum + o.crossSlope * o.gutterWidth
-        : crossSectionY(datum, b.lipOff, b.half, o),
+        ? b.datum + o.crossSlope * o.gutterWidth
+        : crossSectionY(b.datum, b.lipOff, b.half, o),
     };
   });
   const before = layers.carriageway.triangles;
@@ -1601,7 +2567,7 @@ function emitJunction(node, layers, o, ctx, stats) {
 
   // Curb ring: curb face, curb top, footway and kerb ramps, continuous from
   // one approach cross-section round to the next.
-  for (const path of node.paths) emitCurbRing(path, layers, o, ctx, stats);
+  for (let i = 0; i < node.paths.length; i += 1) emitCurbRing(node.paths[i], datums.path[i], layers, o, stats);
 
   // Crosswalks and stop bars.
   if (node.signalId !== null && node.signalId !== undefined) {
@@ -1615,8 +2581,15 @@ function emitJunction(node, layers, o, ctx, stats) {
  * station's own `out` direction and scaled by that station's miter, which is
  * exactly how emitSegment lays out the same three strips, so the two meet
  * vertex for vertex.
+ *
+ * `datums` is one datum per station, from `junctionDatums` - the ribbon's own
+ * end-station datum at each end of the path, blended by chord length in
+ * between. It is NOT sampled under the station: a curb station stands
+ * `half + radius` metres off every centreline, so a datum taken there parts
+ * from the ribbon's by the terrain's cross-grade times that offset, which is
+ * the 246.8 mm step this ring used to open in the sidewalk layer at a corner.
  */
-function emitCurbRing(path, layers, o, ctx, stats) {
+function emitCurbRing(path, datums, layers, o, stats) {
   const stations = path.stations;
   if (stations.length < 2) return;
   let maxWalk = 0;
@@ -1630,8 +2603,8 @@ function emitCurbRing(path, layers, o, ctx, stats) {
   const rampColor = hexToSrgb(palette.ramp);
   const rampReach = o.curbTopWidth + o.rampRun;
 
-  const prepared = stations.map((st) => {
-    const datum = ctx.datum(st.x, st.z);
+  const prepared = stations.map((st, i) => {
+    const datum = datums[i];
     const scale = finite(st.scale) && st.scale > 0 ? st.scale : 1;
     const top = curbTopY(datum, o);
     const curbTop = Math.min(o.curbTopWidth, st.walk);
@@ -1647,13 +2620,18 @@ function emitCurbRing(path, layers, o, ctx, stats) {
     };
   });
 
-  const rampWindow = path.ramp;
+  const rampWindows = path.ramps && path.ramps.length
+    ? path.ramps
+    : (path.ramp ? [path.ramp] : []);
   const spanRamped = (a, b) => {
-    if (!rampWindow) return false;
+    if (!rampWindows.length) return false;
     if (a.st.ang === undefined || b.st.ang === undefined) return false;
     if (!a.rampable || !b.rampable) return false;
     const mid = (a.st.ang + b.st.ang) / 2;
-    return mid > rampWindow.lo - 1e-9 && mid < rampWindow.hi + 1e-9;
+    for (const w of rampWindows) {
+      if (mid > w.lo - 1e-9 && mid < w.hi + 1e-9) return true;
+    }
+    return false;
   };
 
   const flags = [];
@@ -1685,9 +2663,34 @@ function emitCurbRing(path, layers, o, ctx, stats) {
         a.at(a.st.walk, a.walkY(a.st.walk)),
         sidewalkColor, UP);
     } else {
+      // THE KERB DOES NOT VANISH AT A RAMP - IT IS DEPRESSED (round 6).
+      //
+      // Round 4 dropped the curb face entirely across a ramp span, so the kerb
+      // line simply stopped for 1.6 m at every corner and the carriageway met
+      // the concrete as a colour change with no vertical face. Three of the
+      // five reviewers reported exactly that, one of them as "the two planes
+      // are coplanar". A real depressed kerb keeps a low face across the ramp
+      // - a 20-25 mm lip is what a wheel and a white stick both find - so the
+      // kerb line is continuous the whole way round the corner.
+      //
+      // The lip goes in the RAMP layer, not `curbFace`: the surface contract
+      // says a `curbFace` triangle is a FULL-height kerb, and the verifier
+      // asserts no curb face collapses to less than half its declared height.
+      // Same material, same tone, different declared meaning.
+      const lipA = a.invert + o.rampLipHeight;
+      const lipB = b.invert + o.rampLipHeight;
+      if (o.rampLipHeight > 1e-4) {
+        pushQuad(layers.ramp,
+          { x: a.st.x, y: a.invert, z: a.st.z },
+          { x: b.st.x, y: b.invert, z: b.st.z },
+          { x: b.st.x, y: lipB, z: b.st.z },
+          { x: a.st.x, y: lipA, z: a.st.z },
+          curbFaceColor,
+          { x: -(a.st.out.x + b.st.out.x) / 2, y: 0, z: -(a.st.out.z + b.st.out.z) / 2 });
+      }
       pushQuad(layers.ramp,
-        { x: a.st.x, y: a.invert + o.rampLift, z: a.st.z },
-        { x: b.st.x, y: b.invert + o.rampLift, z: b.st.z },
+        { x: a.st.x, y: lipA + o.rampLift, z: a.st.z },
+        { x: b.st.x, y: lipB + o.rampLift, z: b.st.z },
         b.at(b.rampBack, b.walkY(b.rampBack)),
         a.at(a.rampBack, a.walkY(a.rampBack)),
         rampColor, UP);
@@ -1714,7 +2717,7 @@ function emitCurbRing(path, layers, o, ctx, stats) {
     tx = (tx / tl) * dir;
     tz = (tz / tl) * dir;
     pushQuad(layers.ramp,
-      { x: s.st.x, y: s.invert, z: s.st.z },
+      { x: s.st.x, y: s.invert + o.rampLipHeight, z: s.st.z },
       { x: s.st.x, y: s.top, z: s.st.z },
       s.at(s.curbTop, s.walkY(s.curbTop)),
       s.at(s.rampBack, s.walkY(s.rampBack)),
@@ -1726,16 +2729,44 @@ function emitCurbRing(path, layers, o, ctx, stats) {
   stats.rampStrips += rampSpans;
 }
 
+/**
+ * How hard the wheel paths scrub a point `v` metres off the approach
+ * centreline, in [0, 1]. Two tracks per lane at the real 1.64 m track width,
+ * each about 0.3 m wide with a soft shoulder, which is why the stripes of a
+ * crossing wear in a comb pattern rather than evenly.
+ *
+ * Exported so a verifier can assert the comb without reading a buffer.
+ */
+export function wheelTrackWeight(v, half, lanes) {
+  const laneCount = Math.max(1, Math.round(lanes) || 1);
+  const laneWidth = (half * 2) / laneCount;
+  let worst = 0;
+  for (let k = 0; k < laneCount; k += 1) {
+    const centre = -half + laneWidth * (k + 0.5);
+    for (const track of [-0.82, 0.82]) {
+      const d = Math.abs(v - (centre + track));
+      // 1 in the middle of the track, 0 beyond 0.42 m, smooth between.
+      const t = clamp(1 - d / 0.42, 0, 1);
+      const w = t * t * (3 - 2 * t);
+      if (w > worst) worst = w;
+    }
+  }
+  return worst;
+}
+
 function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const palette = o.colors;
   const crosswalkColor = hexToSrgb(palette.crosswalk);
   const white = hexToSrgb(palette.markingWhite);
+  // Repainting is a per-junction event, so every mark at one node shares an
+  // age. 0 = repainted last month, 1 = overdue.
+  const nodeAge = ((hash32(`repaint:${node.id}`) % 1000) / 1000) ** 1.3;
   const u = app.u;
   const m = perpCCW(u);
   const half = app.half;
   const available = app.runLength - (app.atStart ? app.entry.trimEnd : app.entry.trimStart);
   const bandStart = app.trim + o.crosswalkClearance;
-  const bandEnd = bandStart + o.crosswalkBandDepth;
+  const bandEnd = bandStart + (node.bandDepth ?? o.crosswalkBandDepth);
   if (bandEnd + 0.4 > available) return;
   // JUNCTION PAINT FOLLOWS THE CENTRELINE, NOT A RAY (round 3).
   //
@@ -1757,33 +2788,62 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   const straightAt = (d, v) => ({
     x: node.position.x + u.x * d + m.x * v,
     z: node.position.z + u.z * d + m.z * v,
+    datum: ctx.datum(node.position.x + u.x * d, node.position.z + u.z * d),
   });
   const at = (d, v) => {
     const entry = app.entry;
     if (!entry || !entry.points || entry.points.length < 2) return straightAt(d, v);
     const st = frameAt(entry.points, entry.cum, clamp(stationFor(d), 0, entry.length), true);
     const lat = v * lateralSign;
-    return { x: st.x + st.nx * lat * st.miter, z: st.z + st.nz * lat * st.miter };
+    return {
+      x: st.x + st.nx * lat * st.miter,
+      z: st.z + st.nz * lat * st.miter,
+      // THE PAINT TAKES THE ROAD'S DATUM, NOT THE GROUND UNDER THE STRIPE.
+      // A zebra bar reaches `half` metres off the centreline; sampling the
+      // terrain at the bar's own corner put the outer end of every band on a
+      // different surface from the asphalt it is painted on, by the cross-grade
+      // times that offset. It is the same defect as the pad boundary's, and it
+      // is why a crossing could sit proud of the road at one end. The datum is
+      // now the one the carriageway cross-section at this station was swept
+      // from, so the paint rides the road by construction.
+      datum: ctx.datum(st.x, st.z),
+    };
   };
-  const yAt = (p, v) => crossSectionY(ctx.datum(p.x, p.z), v, half, o) + o.junctionPaintLift;
+  const yAt = (p, v) => crossSectionY(p.datum, v, half, o) + o.junctionPaintLift;
 
-  // Zebra band, stripes parallel to the approach axis, aligned to the approach.
-  const usable = Math.max(0, half * 2 - o.crosswalkEdgeInset * 2);
-  const stripes = Math.max(2, Math.floor(usable / o.crosswalkStripePitch));
-  for (let i = 0; i < stripes; i += 1) {
-    const v = -half + o.crosswalkEdgeInset + (usable * (i + 0.5)) / stripes;
-    const v0 = v - o.crosswalkStripeWidth / 2;
-    const v1 = v + o.crosswalkStripeWidth / 2;
+  // Zebra band, bars parallel to the approach axis, aligned to the approach.
+  // The bar width and the bar pitch come from `planCrossingStripes`, which is
+  // the ONE crossing family in this repo: the detail pass paints unsignalised
+  // nodes from the same function, so a node can no longer carry two spacings.
+  const family = planCrossingStripes(half, o);
+  const laneCount = Math.max(1, Math.round(Number(app.entry.segment.lanes) || 2));
+  for (let i = 0; i < family.stripes.length; i += 1) {
+    const { v, v0, v1 } = family.stripes[i];
     const p00 = at(bandStart, v0);
     const p01 = at(bandStart, v1);
     const p10 = at(bandEnd, v0);
     const p11 = at(bandEnd, v1);
+    // WHY EIGHT STRIPES MUST NOT BE THE SAME COLOUR (round 5).
+    //
+    // The stripes of a continental crossing run PARALLEL to the traffic that
+    // crosses them, so a wheel path lies along a stripe rather than across it
+    // and scrubs that whole stripe while leaving its neighbour intact. Round 4
+    // painted every stripe one value and card 01 measured the result: eight
+    // means inside 230.2-232.3 sRGB, a 0.9% spread, which is a printed decal.
+    // Three independent terms now separate them - the junction's repaint age,
+    // a per-stripe jitter for the strip-by-strip way a crew repaints, and the
+    // comb of the wheel paths.
+    const jitter = (hash32(`stripe:${node.id}:${app.entry.segment.id}:${i}`) % 1000) / 1000;
+    const age = clamp(nodeAge * (0.62 + jitter * 0.72), 0, 1);
+    const track = wheelTrackWeight(v, half, laneCount);
+    const wear = clamp(1 - 0.52 * age - 0.42 * track, 0.18, 1);
+    const stripeColor = scaleLinearColor(crosswalkColor, wear);
     pushQuad(layers.crosswalk,
       { x: p00.x, y: yAt(p00, v0), z: p00.z },
       { x: p10.x, y: yAt(p10, v0), z: p10.z },
       { x: p11.x, y: yAt(p11, v1), z: p11.z },
       { x: p01.x, y: yAt(p01, v1), z: p01.z },
-      crosswalkColor, UP);
+      stripeColor, UP);
   }
   stats.crosswalkBands += 1;
 
@@ -1795,18 +2855,29 @@ function emitApproachPaint(node, app, layers, o, ctx, stats) {
   // Traffic arrives travelling along -u; its driving side is
   // -perpCCW(u) * drivingSideSign, i.e. the -m half when drivingSideSign is +1.
   const stopSign = -o.drivingSideSign;
+  // A one-way approach stops across its whole width; a two-way approach stops
+  // only on the half its own traffic is on. `app.oneway` now reads the
+  // contract's directional strings (see `isOneway`), which is what makes this
+  // distinction real on the shipped slice instead of always taking the
+  // two-way branch.
   const vLo = app.oneway ? -half + o.stopBarEdgeInset : Math.min(0, stopSign * (half - o.stopBarEdgeInset));
   const vHi = app.oneway ? half - o.stopBarEdgeInset : Math.max(0, stopSign * (half - o.stopBarEdgeInset));
   const c00 = at(barStart, vLo);
   const c01 = at(barStart, vHi);
   const c10 = at(barEnd, vLo);
   const c11 = at(barEnd, vHi);
+  // The stop bar is crossed by every wheel on the approach rather than lying
+  // under one track, so it takes the junction's repaint age and an averaged
+  // scrub instead of the comb.
+  const barTrack = wheelTrackWeight((vLo + vHi) / 2, half, Math.max(1,
+    Math.round(Number(app.entry.segment.lanes) || 2)));
+  const barWear = clamp(1 - 0.48 * nodeAge - 0.22 * barTrack, 0.22, 1);
   pushQuad(layers.marking,
     { x: c00.x, y: yAt(c00, vLo), z: c00.z },
     { x: c10.x, y: yAt(c10, vLo), z: c10.z },
     { x: c11.x, y: yAt(c11, vHi), z: c11.z },
     { x: c01.x, y: yAt(c01, vHi), z: c01.z },
-    white, UP);
+    scaleLinearColor(white, barWear), UP);
   stats.stopBars += 1;
 }
 
@@ -1833,6 +2904,8 @@ function emptyStats() {
     dashedLines: 0,
     markingQuads: 0,
     streetLengthMeters: 0,
+    yieldedMeters: 0,
+    yieldedSegments: 0,
     paths: 0,
     pathRuns: 0,
     pathSuppressedStations: 0,
@@ -2081,6 +3154,9 @@ export function buildStreetSurfaceData(city, overrides = {}) {
   //   4. emitJunction   - pad, gutter channel, curb ring, ramps, paint
   for (const node of nodes) planJunction(node, o);
   reconcileTrims(entries);
+  for (const node of nodes) planNodePaint(node, o);
+  const yieldStats = planCarriagewayYield(entries, nodes, o);
+  stats.yieldedSegments = yieldStats ? yieldStats.yielded : 0;
   for (const node of nodes) finaliseJunction(node, o, stats);
   for (const node of nodes) emitJunction(node, layers, o, ctx, stats);
   for (const name of STREET_SURFACE_V2_LAYERS) stats.intersectionTriangles += layers[name].triangles;
@@ -2190,8 +3266,19 @@ export function buildStreetSurfaceV2(city, overrides = {}) {
   // Paint: see the Z-FIGHTING POLICY note at the top of this file. The 12 mm
   // world lift handles the general case; polygonOffset handles the grazing
   // pedestrian-eye case where the depth slope across one quad is large.
+  //
+  // The paint tile carries the variation that lives INSIDE the paint - bead
+  // speckle, wear break-up and a ragged edge modulation - on the same world-XZ
+  // UVs the marking layer bakes, so it is continuous across a stripe and
+  // across the gap to the next one. Round 4 had no map here at all, which is
+  // why one crossing measured a 0.9% spread across eight stripes. `maps.paint`
+  // opts out (a caller that wants flat paint, e.g. a geometry-only test).
+  const paintTexture = maps.paint === null ? null : (maps.paint || getPaintMapTexture());
   materials.markings = new THREE.MeshStandardMaterial({
     vertexColors: true,
+    map: paintTexture,
+    bumpMap: paintTexture,
+    bumpScale: paintTexture ? 0.004 : 1,
     roughness: 0.58,
     metalness: 0,
     polygonOffset: true,
@@ -2477,6 +3564,8 @@ export function buildStreetscapePlan(city, overrides = {}) {
   const nodes = collectNodes(shadow, entries, o);
   for (const node of nodes) planJunction(node, o);
   reconcileTrims(entries);
+  for (const node of nodes) planNodePaint(node, o);
+  planCarriagewayYield(entries, nodes, o);
   const throwaway = emptyStats();
   for (const node of nodes) finaliseJunction(node, o, throwaway);
 

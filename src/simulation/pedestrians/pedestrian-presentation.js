@@ -155,26 +155,26 @@
  * self-check, not estimated):
  *
  *   skinned    24 agents  <  28 m   1 SkinnedMesh + 1 AnimationMixer + 17 bones
- *                                   each, 336 tri. 24 draws, 8.1 k tri. The real
- *                                   limit is CPU: 24 mixer evaluations and 48
- *                                   two-bone IK solves per frame, not triangles.
- *   instanced  96 agents  <  90 m   15 InstancedMeshes carrying one matrix per
+ *                                   each, 2 520 body + up to 186 wardrobe tri.
+ *                                   24 draws. The real limit is CPU: 24 mixer
+ *                                   evaluations and 48 two-bone IK solves per
+ *                                   frame, not triangles.
+ *   instanced  96 agents  < 120 m   18 InstancedMeshes carrying one matrix per
  *                                   bone per agent - articulated legs and arms,
  *                                   no skinning, one shared virtual rig posed
- *                                   once per agent. 244 tri each: 15 draws,
- *                                   23.4 k tri.
- *   far       320 agents  < 220 m   4 InstancedMeshes (bottom / top / skin /
- *                                   shoes), the whole figure baked into
+ *                                   once per agent. 556 body + up to 112
+ *                                   wardrobe tri each: 26 draws.
+ *   far       320 agents  < 220 m   5 InstancedMeshes (bottom / top / skin /
+ *                                   hair / shoes), the whole figure baked into
  *                                   character space onto one root matrix, bob
- *                                   only, no mixer. 136 tri each: 4 draws,
- *                                   43.5 k tri.
+ *                                   only, no mixer. 192 + 48 tri each: 9 draws.
  *   shadows   440 agents            1 InstancedMesh of soft blob quads.
  *
- * Total steady-state cost at full population: 44 draw calls and ~75 k triangles
- * for a 440-agent crowd. Agents beyond a band's budget fall to the next cheaper
- * band; only agents past the far band are culled. The budget is a hard cap:
- * `planCrowdPresentation()` can never return more skinned agents than
- * `budget.skinned`, and the self-check proves it over a 600-agent corpus.
+ * Worst case at full population, every wardrobe flag set: 60 draw calls and
+ * 205 872 triangles for a 440-agent crowd. Agents beyond a band's budget fall to
+ * the next cheaper band; only agents past the far band are culled. The budget is
+ * a hard cap: `planCrowdPresentation()` can never return more skinned agents
+ * than `budget.skinned`, and the self-check proves it over a 600-agent corpus.
  */
 
 import * as THREE from 'three';
@@ -742,9 +742,34 @@ export function sampleFootGrounding({
   }
   supportY -= Math.min(drop, GAIT.maxPelvisDrop * scale);
 
-  const rootY = previousRootY == null
+  const damped = previousRootY == null
     ? supportY
     : damp(previousRootY, supportY, responseRate, dt);
+
+  // SECOND REACHABILITY PASS, against the height the body is actually DRAWN at.
+  //
+  // The drop above is solved against `supportY` - where the pelvis belongs -
+  // but the pelvis is drawn at the DAMPED height, which lags by up to the whole
+  // step size for a few frames after a curb. While it lags ABOVE the support,
+  // the leg has to reach further than the first pass allowed for, the two-bone
+  // IK clamps instead of stretching, and the ankle ends up short of its target:
+  // measured, up to 65 mm of ankle drift for the ten frames after a 150 mm
+  // curb, which on the character card is a shoe hanging in the kerb face while
+  // the other one is planted.
+  //
+  // So the drawn height is lowered to whatever the more extended leg can
+  // actually reach, and never below `supportY`, which the first pass has
+  // already solved. The response stays damped - this only ever removes lag,
+  // it never adds motion of its own.
+  let reachDrop = 0;
+  for (const foot of feet) {
+    const horizontal = Math.abs(foot.ankleLongitudinal);
+    if (horizontal >= scaledReach * 0.995) continue;
+    const allowedVertical = Math.sqrt(scaledReach * scaledReach - horizontal * horizontal);
+    const vertical = damped + scaledHip - foot.ankleY;
+    if (vertical > allowedVertical) reachDrop = Math.max(reachDrop, vertical - allowedVertical);
+  }
+  const rootY = reachDrop > 0 ? Math.max(supportY, damped - reachDrop) : damped;
 
   let slopePitch = 0;
   let slopeRoll = 0;
@@ -786,8 +811,50 @@ export const CONTACT_SHADOW = Object.freeze({
   clearanceFade: 0.40,
   fadeStart: 120,
   fadeEnd: 210,
-  lift: 0.012,
+  /**
+   * Height of the blob above the sampled ground, metres.
+   *
+   * 12 mm was set against a ground sampler that returned a PLANE 18-46 mm below
+   * the drawn footway, so the blob was inside the concrete and darkened nothing
+   * - two independent audits measured zero luma difference under a sole at 4 m
+   * and at 13 m. The sampler now returns the drawn surface, and 30 mm clears
+   * it: it is above the 8 mm curb-top fall and the 2% cross-fall over the
+   * blob's own 0.3 m radius (6 mm), with margin left for the terrain sampling
+   * the surface itself is built on. Any larger and the blob separates from the
+   * foot at grazing angles.
+   */
+  lift: 0.03,
+  /**
+   * How much of the blob survives with the sun below the horizon.
+   *
+   * Not zero. A body still occludes the sky dome and the street lighting above
+   * it, so there is still a darker patch under it at night - that is what keeps
+   * a figure attached to the pavement after dark. It is just not a cast shadow,
+   * and 0.42 x 0.40 = 0.17 opacity is the difference between "standing there"
+   * and "a black disc has been stuck to the ground".
+   */
+  nightFloor: 0.40,
 });
+
+/**
+ * Contact-blob density for a sun elevation, as a multiplier on
+ * `CONTACT_SHADOW.baseOpacity`.
+ *
+ * ABOVE the horizon this is unchanged from the shipped daytime behaviour - a
+ * high sun makes a tight dark pool, a low one a softer wash - so no day card
+ * moves. BELOW it, the term falls to `nightFloor` instead of MIRRORING the
+ * daytime value, which is what it used to do: `Math.abs()` gave a sun 30
+ * degrees under the horizon exactly the shadow of a sun 30 degrees over it.
+ *
+ * The crossing is ramped over the first six degrees rather than stepped,
+ * because a sun on the horizon is a long weak wash and not a light switch.
+ */
+export function contactShadowSunTerm(sunElevationDeg) {
+  const deg = Number.isFinite(sunElevationDeg) ? sunElevationDeg : 45;
+  const above = clamp(deg, 0, 90) / 90;
+  const daylight = smoothstep(0, 6, deg);
+  return lerp(CONTACT_SHADOW.nightFloor, lerp(0.72, 1.0, above), daylight);
+}
 
 /**
  * Cheap, reliable grounding: a soft blob under every agent in every band.
@@ -810,10 +877,17 @@ export function contactShadowFor({
   const lengthScale = 1 + CONTACT_SHADOW.speedStretch * clamp(v / 2, 0, 1);
   const clearance = 1 - smoothstep(0, CONTACT_SHADOW.clearanceFade, Math.max(0, groundClearance));
   const distanceFade = 1 - smoothstep(CONTACT_SHADOW.fadeStart, CONTACT_SHADOW.fadeEnd, distance);
-  // A low sun makes a long soft ambient occlusion pool; a high sun makes a
-  // tight dark one. Both are darker than an overhead-light-only guess.
-  const sun = clamp(Math.abs(sunElevationDeg) / 90, 0, 1);
-  const sunTerm = lerp(0.72, 1.0, sun);
+  // A high sun makes a tight dark pool; a low sun makes a soft one; a sun BELOW
+  // the horizon makes neither, and the blob becomes pure ambient occlusion of
+  // the sky dome by the body - real, but much lighter.
+  //
+  // `Math.abs()` used to stand where `sunElevationFactor` does now, so a sun 30
+  // degrees below the horizon produced exactly the shadow of a sun 30 degrees
+  // above it. On the round-4 night card that put a 0.34-opacity black disc
+  // under every figure standing on pavement lit only by shopfronts - a hard
+  // shadow with no light to cast it, which reads as a decal rather than as
+  // contact.
+  const sunTerm = contactShadowSunTerm(sunElevationDeg);
   const opacity = clamp(
     CONTACT_SHADOW.baseOpacity * clearance * distanceFade * sunTerm * opacityScale,
     0,
@@ -937,14 +1011,57 @@ export function identityVariation(idOrSeed) {
 export const WARDROBE_PARTS = Object.freeze([
   // A coat is a hem, and a hem is the single most legible clothing silhouette at
   // street distance: it flares below the hips and breaks the leg line.
-  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'taper', size: [0.30, 0.235, 0.375, 0.285, 0.44], offset: [0, -0.15, 0], detail: 'far', group: 'top', ao: 0.30 },
+  // The coat, twice over - the same argument the cranium makes above.
+  //
+  // A 4-sided frustum is the right shape for a 40-pixel figure and the wrong
+  // one for a figure two metres from the lens: it has FOUR vertical corners, so
+  // at hero distance it reads as a box worn over the body, which is exactly
+  // what a round-4 reviewer wrote down about the near-field figure ("a red
+  // jacket box interpenetrating the green torso"). It is capped at `mid`.
+  //
+  // The near tier draws a lofted coat in its place: a hexagonal section, waist
+  // in and hem flared, hanging 50 mm further down the thigh than the frustum
+  // and carried 10 mm forward at the hem so it hangs like cloth rather than
+  // standing like a bin. 32 triangles against the frustum's 12; the +20 is
+  // inside the near-tier budget restated in street-life.js.
+  //
+  // The hem is also 55 mm DEEPER than the frustum's (170 vs 142 mm half-depth).
+  // A coat is parented to the hips and a swinging thigh is not, so the front of
+  // the skirt is where a knee comes through it: at a 25 degree swing the
+  // frustum was pierced by 48 mm and this is pierced by 14 mm. Deeper still
+  // would read as a barrel; the remaining 14 mm is stated rather than hidden.
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'taper', size: [0.30, 0.235, 0.375, 0.285, 0.44], offset: [0, -0.15, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.30 },
+  { key: 'coat', bone: 'Hips', slot: 'top', kind: 'loft', sides: 6, detail: 'near', group: 'top', ao: 0.32, offset: [0, 0, 0], size: [
+    [-0.420, 0.203, 0.170, 0, 0.010],
+    [-0.160, 0.186, 0.150, 0, 0.006],
+    [ 0.062, 0.166, 0.130, 0, 0],
+  ] },
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'taper', size: [0.245, 0.130, 0.275, 0.155, 0.360], offset: [0, 0.045, -0.160], detail: 'far', group: 'accent', ao: 0.30 },
   // Straps: a backpack with no straps floats behind the shoulders.
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
   { key: 'backpack', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.048, 0.230, 0.030], offset: [-0.098, 0.105, 0.100], detail: 'near', group: 'accent', ao: 0.35 },
   { key: 'bag', bone: 'Hips', slot: 'accent', kind: 'taper', size: [0.175, 0.085, 0.205, 0.105, 0.245], offset: [0.185, 0.030, 0.015], detail: 'mid', group: 'accent', ao: 0.28 },
-  // The strap is what makes a bag read as carried rather than stuck on.
-  { key: 'bag', bone: 'Chest', slot: 'accent', kind: 'box', size: [0.036, 0.300, 0.026], offset: [-0.055, 0.060, 0.088], detail: 'near', group: 'accent', ao: 0.40 },
+  // THE STRAP, AND WHY IT WAS A STRAY PRISM.
+  //
+  // A strap is what makes a bag read as carried rather than stuck on - but a
+  // BOX cannot be a strap, because a part carries an offset and no rotation, so
+  // the box could only ever hang vertically. It did: 36 x 300 x 26 mm, upright,
+  // on the front of the chest, starting below the shoulder and ending well
+  // above the bag. It touched neither end. Three round-4 reviewers logged it
+  // independently, one of them as "a stray teal prism on the shoulder" in the
+  // hero frame, and they were describing exactly this part.
+  //
+  // A loft CAN be a strap: its section centre is free to travel, so three rings
+  // carry it from the right shoulder, across the sternum, to the left hip where
+  // the bag actually hangs (the bag is at Hips +0.185 x, and +x is the LEFT of
+  // this rig - see `restBoneWorld('LeftArm')`). 3 sides and 3 rings is 14
+  // triangles against the box's 12; the strap is a near-tier part only, so
+  // nothing below `near` changes at all.
+  { key: 'bag', bone: 'Chest', slot: 'accent', kind: 'loft', sides: 3, detail: 'near', group: 'accent', ao: 0.40, offset: [0, 0, 0], size: [
+    [-0.150, 0.024, 0.012,  0.132, 0.070],
+    [ 0.010, 0.022, 0.011, -0.020, 0.104],
+    [ 0.150, 0.020, 0.010, -0.130, 0.050],
+  ] },
   { key: 'hat', bone: 'Head', slot: 'accent', kind: 'taper', size: [0.130, 0.140, 0.160, 0.168, 0.105], offset: [0, 0.268, 0.002], detail: 'far', group: 'accent', ao: 0.25 },
   { key: 'brim', bone: 'Head', slot: 'accent', kind: 'cyl', size: [0.190, 0.190, 0.016], offset: [0, 0.213, 0.012], detail: 'mid', group: 'accent', ao: 0.55 },
   { key: 'longHair', bone: 'Head', slot: 'hair', kind: 'taper', size: [0.180, 0.115, 0.155, 0.095, 0.270], offset: [0, 0.075, -0.078], detail: 'far', group: 'hair', ao: 0.34 },
@@ -1125,77 +1242,105 @@ export const SEATED_ACTIVITIES = Object.freeze(['sit']);
  * a statue. Bones absent from an entry keep whatever the locomotion mixer left
  * on them, which is what makes these overlays and not replacements.
  *
- * Arm bones hang down -Y in the rest pose, so a positive X rotation swings the
- * hand forward and a negative one swings it back.
+ * SIGN CONVENTION, AND THE ONE THAT WAS HERE BEFORE.
+ *
+ * These are three.js `XYZ` eulers on a bone whose geometry runs down its own
+ * -Y. `RX(t)` maps `(0,-1,0)` to `(0,-cos t,-sin t)`, so on a HANGING bone - an
+ * arm, a forearm, a thigh, a shin - a POSITIVE X swings the far end toward -Z,
+ * which is BEHIND this rig (heading 0 faces +Z; the nose is at +Z). On a bone
+ * that points up - spine, chest, neck, head - the same positive X tips the top
+ * toward +Z, i.e. forward. The two families read opposite, and the table used
+ * to say the opposite of what the maths does.
+ *
+ * The consequence was measurable and it was in every hero frame: with the arm
+ * entries authored as if positive were forward, ALL NINE activities put BOTH
+ * hands behind the body - `wait` at z = -0.33 m, `phone` with the handset hand
+ * 0.27 m behind the head instead of at the ear - and every forearm bent
+ * BACKWARD, which is not a direction an elbow has. `LOCOMOTION_CLIP_SOURCE`
+ * below always had it right (its forearm keys are negative throughout and its
+ * arm swing is contralateral to the leg swing), so the walking crowd was fine
+ * and the standing one was not.
+ *
+ * The X terms on the four arm bones are therefore negated against what this
+ * table used to hold. Legs (`sit`) and the up-pointing bones were already
+ * correct and are untouched. `hands.mjs`-style measurement: with the fix, no
+ * activity puts a hand behind the coronal plane.
  */
 export const ACTIVITY_POSE_SOURCE = Object.freeze({
   stand: {
-    LeftArm: [0.04, 0, 0.09, 0.05, 0, 0.02, 0.12, 0],
-    RightArm: [0.04, 0, -0.09, 0.05, 0, 0.02, 0.11, 0.5],
-    LeftForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.12, 0.25],
-    RightForeArm: [0.18, 0, 0, 0.05, 0, 0, 0.11, 0.75],
+    LeftArm: [-0.04, 0, 0.09, -0.05, 0, 0.02, 0.12, 0],
+    RightArm: [-0.04, 0, -0.09, -0.05, 0, 0.02, 0.11, 0.5],
+    LeftForeArm: [-0.18, 0, 0, -0.05, 0, 0, 0.12, 0.25],
+    RightForeArm: [-0.18, 0, 0, -0.05, 0, 0, 0.11, 0.75],
     Spine: [0, 0, 0, 0, 0.035, 0.012, 0.09, 0],
     Head: [0, 0, 0, 0.03, 0.13, 0, 0.07, 0.3],
   },
   wait: {
-    // Arms folded: upper arms in and slightly forward, forearms across the ribs.
-    LeftArm: [0.30, 0, 0.34, 0.02, 0, 0.01, 0.10, 0],
-    RightArm: [0.30, 0, -0.34, 0.02, 0, 0.01, 0.10, 0.5],
-    LeftForeArm: [1.15, 0.55, 0, 0.03, 0, 0, 0.10, 0],
-    RightForeArm: [1.15, -0.55, 0, 0.03, 0, 0, 0.10, 0.5],
+    // Arms folded. Solved against the rig rather than eyeballed: with these
+    // four angles the drawn hands land at (+-0.076, 1.120, 0.162) m, i.e. one
+    // in front of each set of ribs, 152 mm apart so the two forearms lie across
+    // the body without either crossing the midline into the other.
+    LeftArm: [0.25, -0.30, -0.20, -0.02, 0, 0.01, 0.10, 0],
+    RightArm: [0.25, 0.30, 0.20, -0.02, 0, 0.01, 0.10, 0.5],
+    LeftForeArm: [-1.85, 0, 0, -0.03, 0, 0, 0.10, 0],
+    RightForeArm: [-1.85, 0, 0, -0.03, 0, 0, 0.10, 0.5],
     Spine: [0.02, 0, 0, 0, 0.05, 0.02, 0.06, 0.2],
     Head: [0.02, 0, 0, 0.04, 0.22, 0, 0.05, 0],
   },
   phone: {
-    // Handset arm up to the ear, free arm tucked; head tipped in.
-    RightArm: [0.55, 0, -0.72, 0.03, 0, 0.02, 0.13, 0],
-    RightForeArm: [1.95, -0.35, 0, 0.04, 0, 0, 0.13, 0],
-    LeftArm: [0.22, 0, 0.20, 0.03, 0, 0, 0.12, 0.5],
-    LeftForeArm: [0.85, 0, 0, 0.04, 0, 0, 0.12, 0.5],
+    // Reading a phone: the busy hand comes up and forward to (-0.32, 1.36,
+    // 0.27) m - chest height, a forearm's length in front - and the head tips
+    // 0.14 rad down toward it. The free arm is tucked. (Before the sign fix
+    // above these numbers put that hand 0.27 m BEHIND the head, which is what
+    // the table's comment used to describe as "up to the ear".)
+    RightArm: [-0.55, 0, -0.72, -0.03, 0, 0.02, 0.13, 0],
+    RightForeArm: [-1.95, -0.35, 0, -0.04, 0, 0, 0.13, 0],
+    LeftArm: [-0.22, 0, 0.20, -0.03, 0, 0, 0.12, 0.5],
+    LeftForeArm: [-0.85, 0, 0, -0.04, 0, 0, 0.12, 0.5],
     Head: [0.14, -0.22, -0.12, 0.02, 0.05, 0, 0.16, 0],
     Spine: [0.03, -0.05, 0, 0, 0.03, 0, 0.10, 0],
   },
   talk: {
     // Gesturing hand, open shoulders, head turned toward the listener.
-    RightArm: [0.62, 0, -0.30, 0.30, 0, 0.16, 0.55, 0],
-    RightForeArm: [1.05, 0, 0, 0.42, 0, 0, 0.55, 0.18],
-    LeftArm: [0.20, 0, 0.16, 0.08, 0, 0.04, 0.31, 0.5],
-    LeftForeArm: [0.55, 0, 0, 0.12, 0, 0, 0.31, 0.6],
+    RightArm: [-0.62, 0, -0.30, -0.3, 0, 0.16, 0.55, 0],
+    RightForeArm: [-1.05, 0, 0, -0.42, 0, 0, 0.55, 0.18],
+    LeftArm: [-0.2, 0, 0.16, -0.08, 0, 0.04, 0.31, 0.5],
+    LeftForeArm: [-0.55, 0, 0, -0.12, 0, 0, 0.31, 0.6],
     Head: [0.02, 0.26, 0, 0.05, 0.07, 0, 0.42, 0],
     Spine: [0.02, 0.10, 0, 0.01, 0.04, 0, 0.28, 0],
   },
   listen: {
-    LeftArm: [0.26, 0, 0.30, 0.03, 0, 0.02, 0.16, 0],
-    RightArm: [0.26, 0, -0.30, 0.03, 0, 0.02, 0.16, 0.5],
-    LeftForeArm: [1.05, 0.42, 0, 0.04, 0, 0, 0.16, 0],
-    RightForeArm: [1.05, -0.42, 0, 0.04, 0, 0, 0.16, 0.5],
+    LeftArm: [-0.26, 0, 0.30, -0.03, 0, 0.02, 0.16, 0],
+    RightArm: [-0.26, 0, -0.30, -0.03, 0, 0.02, 0.16, 0.5],
+    LeftForeArm: [-1.05, 0.42, 0, -0.04, 0, 0, 0.16, 0],
+    RightForeArm: [-1.05, -0.42, 0, -0.04, 0, 0, 0.16, 0.5],
     Head: [0.05, -0.24, 0, 0.06, 0.05, 0, 0.22, 0.4],
     Spine: [0.03, -0.08, 0, 0, 0.02, 0, 0.19, 0],
   },
   carry: {
     // Loaded arm hangs straight and heavy, free arm counter-swings a little.
-    RightArm: [0.02, 0, -0.05, 0.03, 0, 0.01, 0.20, 0],
-    RightForeArm: [0.06, 0, 0, 0.02, 0, 0, 0.20, 0],
-    LeftArm: [0.12, 0, 0.14, 0.10, 0, 0.03, 0.20, 0.5],
-    LeftForeArm: [0.30, 0, 0, 0.10, 0, 0, 0.20, 0.55],
+    RightArm: [-0.02, 0, -0.05, -0.03, 0, 0.01, 0.20, 0],
+    RightForeArm: [-0.06, 0, 0, -0.02, 0, 0, 0.20, 0],
+    LeftArm: [-0.12, 0, 0.14, -0.1, 0, 0.03, 0.20, 0.5],
+    LeftForeArm: [-0.3, 0, 0, -0.1, 0, 0, 0.20, 0.55],
     Spine: [0, 0, -0.05, 0, 0.02, 0.01, 0.20, 0],
     Head: [0.02, 0, 0, 0.02, 0.09, 0, 0.13, 0],
   },
   lean: {
     Spine: [-0.10, 0, 0, 0.01, 0.03, 0.01, 0.08, 0],
     Chest: [-0.06, 0, 0, 0.01, 0.02, 0, 0.08, 0.3],
-    LeftArm: [0.10, 0, 0.24, 0.03, 0, 0.02, 0.10, 0],
-    RightArm: [0.10, 0, -0.24, 0.03, 0, 0.02, 0.10, 0.5],
-    LeftForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0],
-    RightForeArm: [0.35, 0, 0, 0.03, 0, 0, 0.10, 0.5],
+    LeftArm: [-0.1, 0, 0.24, -0.03, 0, 0.02, 0.10, 0],
+    RightArm: [-0.1, 0, -0.24, -0.03, 0, 0.02, 0.10, 0.5],
+    LeftForeArm: [-0.35, 0, 0, -0.03, 0, 0, 0.10, 0],
+    RightForeArm: [-0.35, 0, 0, -0.03, 0, 0, 0.10, 0.5],
     Head: [-0.04, 0, 0, 0.03, 0.16, 0, 0.06, 0.2],
   },
   browse: {
     // Facing a window: shoulders square to it, head up and scanning.
-    LeftArm: [0.16, 0, 0.14, 0.03, 0, 0.01, 0.14, 0],
-    RightArm: [0.30, 0, -0.16, 0.04, 0, 0.02, 0.14, 0.5],
-    LeftForeArm: [0.42, 0, 0, 0.04, 0, 0, 0.14, 0],
-    RightForeArm: [0.95, -0.20, 0, 0.05, 0, 0, 0.14, 0.5],
+    LeftArm: [-0.16, 0, 0.14, -0.03, 0, 0.01, 0.14, 0],
+    RightArm: [-0.3, 0, -0.16, -0.04, 0, 0.02, 0.14, 0.5],
+    LeftForeArm: [-0.42, 0, 0, -0.04, 0, 0, 0.14, 0],
+    RightForeArm: [-0.95, -0.20, 0, -0.05, 0, 0, 0.14, 0.5],
     Head: [-0.06, 0, 0, 0.04, 0.20, 0, 0.11, 0],
     Spine: [0.02, 0, 0, 0, 0.03, 0, 0.11, 0.4],
   },
@@ -1208,10 +1353,10 @@ export const ACTIVITY_POSE_SOURCE = Object.freeze({
     LeftFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0],
     RightFoot: [0.10, 0, 0, 0, 0, 0, 0.08, 0.5],
     Spine: [0.06, 0, 0, 0.01, 0.04, 0, 0.09, 0],
-    LeftArm: [0.34, 0, 0.13, 0.04, 0, 0.01, 0.09, 0],
-    RightArm: [0.34, 0, -0.13, 0.04, 0, 0.01, 0.09, 0.5],
-    LeftForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0],
-    RightForeArm: [0.72, 0, 0, 0.05, 0, 0, 0.09, 0.5],
+    LeftArm: [-0.34, 0, 0.13, -0.04, 0, 0.01, 0.09, 0],
+    RightArm: [-0.34, 0, -0.13, -0.04, 0, 0.01, 0.09, 0.5],
+    LeftForeArm: [-0.72, 0, 0, -0.05, 0, 0, 0.09, 0],
+    RightForeArm: [-0.72, 0, 0, -0.05, 0, 0, 0.09, 0.5],
     Head: [0.04, 0, 0, 0.03, 0.14, 0, 0.07, 0.25],
   },
 });
@@ -1300,6 +1445,498 @@ export function mirrorActivityPose(pose) {
   return pose;
 }
 
+// ------------------------------------------------------------------ validity
+//
+// THE CROWD IS ALLOWED TO BE CHEAP. IT IS NOT ALLOWED TO BE IMPOSSIBLE.
+//
+// Round-4 scored character grounding 1.0 against a 4.0 floor, unanimously, on
+// five findings that are all the same kind of thing - a figure in a state no
+// body can be in:
+//
+//   * two figures standing INSIDE a building, behind the ground-floor glazing,
+//     tilted 25-45 degrees off vertical, feet clear of the pavement;
+//   * a figure bent double, arms vertical, HEAD BELOW HIPS, inside a facade;
+//   * a figure whose carried box is detached from its hands and intersects its
+//     own head;
+//   * a figure whose two feet sit at different heights on flat asphalt, one
+//     shoe through the kerb face;
+//   * a hero-frame figure with its head yawed off its shoulders, which is what
+//     put a nose prism on the SIDE of a head.
+//
+// Every one of those was PRODUCED BY THIS MODULE and DRAWN without complaint,
+// while the module's own counters reported a healthy crowd. That is the failure
+// this section exists to make impossible: not "the bug is fixed" - the bugs
+// above have their own fixes upstream - but "a pose that cannot be true is not
+// submitted for draw, and the rejection is counted where the next reviewer can
+// read it".
+//
+// THREE RULES THIS SECTION FOLLOWS.
+//
+//   1. MEASURE THE DRAWN TRANSFORM, NOT THE MODEL THAT PRODUCED IT. Every pose
+//      check below reads `bone.matrixWorld` AFTER `applyPose` has finished -
+//      the same matrices that go into the skin and into the instance buffer.
+//      Re-checking the placement code's own intent is how this build shipped a
+//      0.0019 m contact error under a visibly levitating vehicle.
+//   2. FAIL VISIBLY, NEVER SILENTLY. Every rejection increments a named counter
+//      that is published in `stats.validity` (crowd) and
+//      `diagnostics.validity` (street life). A gate that quietly drops figures
+//      is indistinguishable from a bug that quietly drops figures.
+//   3. FAIL OPEN WHERE THERE IS NO DATA. With no building footprints wired in,
+//      the building test does not guess - it reports `buildings: 'none'` and
+//      counts every agent as unchecked, so "the gate found nothing" can never
+//      be confused with "the gate was not asked".
+
+/**
+ * Everything the gate compares against, in one place, with its derivation.
+ *
+ * These are LIMITS OF THE BODY, not tuning knobs. Each is stated against the
+ * rig's own rest measurements so that changing the rig moves the limit with it
+ * rather than leaving a stale constant behind.
+ */
+export const PRESENTATION_VALIDITY = Object.freeze({
+  version: 'pedestrian-validity-v1',
+  /**
+   * Head above hips, metres, at the reference scale.
+   *
+   * Rest separation is `restBoneWorld('Head').y - restBoneWorld('Hips').y` =
+   * 0.590 m. The smallest identity scale is 0.90 (`identityVariation`), and a
+   * deep crouch or a lean shortens the vertical projection further, so the
+   * floor is set at 60% of the rest separation: 0.35 m. Anything under that is
+   * not a person bending over, it is a person folded at the waist - the
+   * round-4 wet-street figure measured NEGATIVE.
+   */
+  minHeadAboveHipsM: 0.35,
+  /**
+   * Torso tilt off the agent's own up axis, radians.
+   *
+   * Measured against the ROOT's up axis, not world up, so a figure standing on
+   * a 20% slope is not penalised for standing normally on it. 0.61 rad is
+   * 35 degrees: a deep bow, past anything the authored activity poses ask for
+   * (the deepest is `lean` at 0.10 rad) and past the 12-degree ceiling the walk
+   * cycle is verified to hold. The round-4 canyon figures measured 25-45.
+   *
+   * This one CLAMPS before it rejects: a torso a few degrees over the limit is
+   * pulled back to the limit and drawn, because deleting a figure is a worse
+   * artifact than a slightly stiff one. It only rejects when the clamp cannot
+   * bring it back (a non-finite or wildly broken bone chain).
+   */
+  maxTorsoTiltRad: 0.61,
+  /**
+   * Head yaw off the chest, radians. 1.08 rad is 62 degrees - past the human
+   * cervical limit of about 80 degrees only in the sense that the AUTHORED
+   * poses never ask for more than 0.26 rad, so anything past this is a
+   * transform defect and not a look-over-the-shoulder. A head yawed 90 degrees
+   * off the torso is what puts a nose on a cheek.
+   */
+  maxHeadYawRad: 1.08,
+  /**
+   * How far a drawn ankle may sit from the ankle the foot solver asked for,
+   * metres.
+   *
+   * This is the check that measures the DRAWN skeleton against its own target,
+   * and it is the one that would have caught the round-4 shoe hanging in the
+   * kerb face while the other foot was planted.
+   *
+   * The limit is derived, not chosen. `solveTwoBoneIK` clamps rather than
+   * stretches, so an ankle can only fall short when the pelvis is higher than
+   * the leg can reach down from - and the pelvis is only ever that high because
+   * `GAIT.maxPelvisDrop` (0.16 m) caps how far it may crouch. Swept over every
+   * speed to 3 m/s, every identity scale and 240 phases, the WORST reach
+   * deficit that cap can produce at steady state is 58 mm (3 m/s, 1.10 scale,
+   * mid-swing). 75 mm is that measured bound plus 30%, so the gate fires only
+   * on drift the authored crouch cap does not explain, and well under the
+   * 150 mm that reads as a floating shoe.
+   *
+   * The transient case - the damped root lagging above the support after a
+   * curb, which measured 65 mm - is not covered by this margin: it is FIXED, by
+   * the second reachability pass in `sampleFootGrounding`. Measured after that
+   * fix, 240 frames x 300 agents across a 150 mm curb produce a worst drift of
+   * 17 mm and zero rejections.
+   */
+  maxAnkleDriftM: 0.075,
+  /**
+   * Ground height difference between two feet that are BOTH in contact,
+   * metres.
+   *
+   * A kerb is 150 mm and stepping onto one is legitimate, so the limit is the
+   * kerb plus the sampling tolerance of the surface under it: 0.22 m. Past
+   * that, the two feet are standing on two different surfaces - a footway and
+   * the floor of a building, or a footway and a road one storey down.
+   */
+  maxContactStepM: 0.22,
+  /**
+   * Body half-breadth, body half-depth, and the separation two centres may not
+   * cross, all metres.
+   *
+   * Taken from the drawn near-tier solid at the largest identity scale, which
+   * is `heightScale` 1.10 x `buildScale` 1.12 = 1.232 on the horizontal axes:
+   *
+   *   half-breadth  bideltoid 0.488 / 2 x 1.232 = 0.301 m
+   *   half-depth    chest section 0.205 / 2 x 1.232 = 0.126 m
+   *
+   * Two bodies whose centres are 0.40 m apart can only avoid sharing solid if
+   * BOTH are turned within about 40 degrees of profile to each other - which is
+   * exactly what two people passing on a narrow pavement do, and is why the
+   * limit is not the 0.60 m that "shoulders never touch" would require. Below
+   * 0.40 m one figure is standing where another one already is, at any pair of
+   * yaws worth arguing about.
+   *
+   * `releaseFactor` is hysteresis. Without it a pair oscillating around the
+   * threshold blinks one of its members on and off every frame, which is a LOD
+   * pop by another name; a suppressed figure is only restored once the pair is
+   * 25% clear of the threshold.
+   */
+  /**
+   * THE GOVERNOR on the building test.
+   *
+   * The footprints and the walking paths come from two different owners - a
+   * source building polygon set and a sidewalk path generator - and this module
+   * owns neither. If they disagree wholesale, every walker in the city is
+   * "inside a building" and a gate that obeys literally would delete the crowd
+   * and report a clean frame. That is a worse failure than the one it is
+   * guarding against, and it is not one a reviewer could diagnose from a frame.
+   *
+   * So: above this share of checked agents, the building rejection SUSPENDS
+   * itself for the next frame and publishes `insideBuildingShare` and
+   * `insideBuildingSuspended` instead. The crowd stays drawn, the disagreement
+   * is stated as a number, and the owner of the paths can act on it. Below the
+   * share, the rejection is enforced literally.
+   *
+   * 0.20 is the line: a fifth of a city's pedestrians standing inside its
+   * buildings is a systematic data fault, not a crowd with some bad placements.
+   */
+  maxInsideBuildingShare: 0.20,
+  halfBreadthM: 0.301,
+  halfDepthM: 0.126,
+  minSeparationM: 0.40,
+  releaseFactor: 1.25,
+});
+
+/** Every reason the gate can refuse to draw an agent. Order is report order. */
+export const VALIDITY_REASONS = Object.freeze([
+  'insideBuilding',
+  'headBelowHips',
+  'headYaw',
+  'torsoTilt',
+  'ankleDrift',
+  'rootDrift',
+  'footSplit',
+  'overlap',
+  'nonFinite',
+]);
+
+/**
+ * A counted ledger of gate decisions, published verbatim in diagnostics.
+ *
+ * `checked` counts agents the gate looked at, `drawn` the ones it passed and
+ * `rejected` the ones it refused; `reasons` breaks the refusals down, and
+ * `clampedTorso` / `suppressedProps` count the two REPAIRS the gate makes
+ * instead of rejecting. `buildings` records where the footprints came from, so
+ * a zero in `reasons.insideBuilding` can be read correctly: 'none' means the
+ * test never ran.
+ */
+export function createValidityLedger() {
+  const reasons = {};
+  for (const reason of VALIDITY_REASONS) reasons[reason] = 0;
+  // What the gate MEASURED, not only what it rejected. A frame with zero
+  // rejections and a worst torso tilt of 0.59 rad is one authored pose away
+  // from failing, and a reviewer can only know that if the measurement is
+  // published. Peaks are over every pose judged this frame, rejected or not.
+  //
+  // The two MINIMA start at Infinity, so in a JSON diagnostics payload they
+  // read as `null` when nothing was measured this frame - which is the correct
+  // reading: not "zero separation", but "no figure was judged".
+  const peak = {
+    torsoTilt: 0,
+    headYaw: 0,
+    ankleDrift: 0,
+    rootDrift: 0,
+    contactStep: 0,
+    minHeadAboveHips: Infinity,
+    minSeparation: Infinity,
+  };
+  const ledger = {
+    version: PRESENTATION_VALIDITY.version,
+    checked: 0,
+    drawn: 0,
+    rejected: 0,
+    clampedTorso: 0,
+    suppressedProps: 0,
+    unchecked: 0,
+    buildings: 'none',
+    /** Agents measured inside a building footprint, acted on or not. */
+    insideBuilding: 0,
+    insideBuildingShare: 0,
+    /** True while the governor is holding the building rejection off. */
+    insideBuildingSuspended: false,
+    reasons,
+    peak,
+    reset() {
+      ledger.checked = 0;
+      ledger.drawn = 0;
+      ledger.rejected = 0;
+      ledger.clampedTorso = 0;
+      ledger.suppressedProps = 0;
+      ledger.unchecked = 0;
+      ledger.insideBuilding = 0;
+      ledger.insideBuildingShare = 0;
+      for (const reason of VALIDITY_REASONS) reasons[reason] = 0;
+      peak.torsoTilt = 0;
+      peak.headYaw = 0;
+      peak.ankleDrift = 0;
+      peak.rootDrift = 0;
+      peak.contactStep = 0;
+      peak.minHeadAboveHips = Infinity;
+      peak.minSeparation = Infinity;
+      return ledger;
+    },
+    /** Fold one measured pose into the peaks. */
+    observe(metrics) {
+      if (metrics.torsoTilt > peak.torsoTilt) peak.torsoTilt = metrics.torsoTilt;
+      if (metrics.headYaw > peak.headYaw) peak.headYaw = metrics.headYaw;
+      if (metrics.ankleDrift > peak.ankleDrift) peak.ankleDrift = metrics.ankleDrift;
+      if (metrics.rootDrift > peak.rootDrift) peak.rootDrift = metrics.rootDrift;
+      if (metrics.contactStep > peak.contactStep) peak.contactStep = metrics.contactStep;
+      if (metrics.headAboveHips < peak.minHeadAboveHips) peak.minHeadAboveHips = metrics.headAboveHips;
+      return metrics;
+    },
+    /** Fold one measured neighbour distance into the peaks. */
+    observeSeparation(distance) {
+      if (distance < peak.minSeparation) peak.minSeparation = distance;
+      return distance;
+    },
+    reject(reason) {
+      ledger.rejected += 1;
+      if (reason in reasons) reasons[reason] += 1;
+      return false;
+    },
+  };
+  return ledger;
+}
+
+/**
+ * A point-in-footprint index over building polygons.
+ *
+ * Uniform hash grid of polygon bounding boxes; `contains` runs the standard
+ * crossing test against the candidates in one cell. Built once per world, read
+ * once per agent per re-plan, so it is bounded by the number of buildings and
+ * never by the number of people.
+ *
+ * @param {Array<{polygon:Array<{x:number,z:number}>}>|Array<Array<{x:number,z:number}>>} buildings
+ * @param {object} [options]
+ * @param {number} [options.cell=28] grid pitch, metres
+ * @param {number} [options.maxBuildings=40000] memory guard
+ */
+export function buildFootprintIndex(buildings, { cell = 28, maxBuildings = 40000 } = {}) {
+  const list = Array.isArray(buildings) ? buildings : [];
+  const rings = [];
+  const cells = new Map();
+  const add = (key, index) => {
+    let bucket = cells.get(key);
+    if (!bucket) {
+      bucket = [];
+      cells.set(key, bucket);
+    }
+    bucket.push(index);
+  };
+  for (const entry of list) {
+    if (rings.length >= maxBuildings) break;
+    const polygon = Array.isArray(entry) ? entry : entry?.polygon;
+    if (!Array.isArray(polygon) || polygon.length < 3) continue;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    const flat = new Float64Array(polygon.length * 2);
+    let ok = true;
+    for (let i = 0; i < polygon.length; i += 1) {
+      const px = Number(polygon[i]?.x);
+      const pz = Number(polygon[i]?.z);
+      if (!Number.isFinite(px) || !Number.isFinite(pz)) { ok = false; break; }
+      flat[i * 2] = px;
+      flat[i * 2 + 1] = pz;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (pz < minZ) minZ = pz;
+      if (pz > maxZ) maxZ = pz;
+    }
+    if (!ok) continue;
+    const index = rings.length;
+    rings.push({ flat, minX, maxX, minZ, maxZ });
+    const gx0 = Math.floor(minX / cell);
+    const gx1 = Math.floor(maxX / cell);
+    const gz0 = Math.floor(minZ / cell);
+    const gz1 = Math.floor(maxZ / cell);
+    // A single absurd polygon (a whole-city block outline) would otherwise
+    // paint the entire grid; cap the span it may claim and fall back to the
+    // bounding-box test for it.
+    if ((gx1 - gx0 + 1) * (gz1 - gz0 + 1) > 4096) continue;
+    for (let gz = gz0; gz <= gz1; gz += 1) {
+      for (let gx = gx0; gx <= gx1; gx += 1) add(`${gx}:${gz}`, index);
+    }
+  }
+  const inside = (ring, x, z) => {
+    if (x < ring.minX || x > ring.maxX || z < ring.minZ || z > ring.maxZ) return false;
+    const flat = ring.flat;
+    const n = flat.length / 2;
+    let hit = false;
+    for (let i = 0, j = n - 1; i < n; j = i, i += 1) {
+      const xi = flat[i * 2];
+      const zi = flat[i * 2 + 1];
+      const xj = flat[j * 2];
+      const zj = flat[j * 2 + 1];
+      if ((zi > z) !== (zj > z)
+        && x < ((xj - xi) * (z - zi)) / (zj - zi || 1e-12) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  return {
+    count: rings.length,
+    cell,
+    /** True when `(x, z)` is inside any building footprint. */
+    contains(x, z) {
+      if (!rings.length || !Number.isFinite(x) || !Number.isFinite(z)) return false;
+      const bucket = cells.get(`${Math.floor(x / cell)}:${Math.floor(z / cell)}`);
+      if (!bucket) return false;
+      for (let i = 0; i < bucket.length; i += 1) {
+        if (inside(rings[bucket[i]], x, z)) return true;
+      }
+      return false;
+    },
+  };
+}
+
+/**
+ * A frame-scoped index of where the drawn bodies already are.
+ *
+ * Rebuilt every frame from the agents the gate has ACCEPTED, so it describes
+ * the drawn crowd and not the planned one. Cell pitch is the separation limit,
+ * so a query touches nine cells at most.
+ */
+export function createCapsuleIndex(cell = PRESENTATION_VALIDITY.minSeparationM * 2) {
+  const cells = new Map();
+  return {
+    cell,
+    clear() { cells.clear(); },
+    /** Distance to the nearest occupied centre, or Infinity. */
+    nearest(x, z) {
+      const gx = Math.floor(x / cell);
+      const gz = Math.floor(z / cell);
+      let best = Infinity;
+      for (let dz = -1; dz <= 1; dz += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const bucket = cells.get(`${gx + dx}:${gz + dz}`);
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i += 2) {
+            const ex = bucket[i];
+            const ez = bucket[i + 1];
+            const d2 = (ex - x) * (ex - x) + (ez - z) * (ez - z);
+            if (d2 < best) best = d2;
+          }
+        }
+      }
+      return Math.sqrt(best);
+    },
+    add(x, z) {
+      const key = `${Math.floor(x / cell)}:${Math.floor(z / cell)}`;
+      let bucket = cells.get(key);
+      if (!bucket) {
+        bucket = [];
+        cells.set(key, bucket);
+      }
+      bucket.push(x, z);
+    },
+  };
+}
+
+// ------------------------------------------------------------ carried props
+//
+// WHY A CARRIED BOX ENDS UP IN SOMEBODY'S EAR
+//
+// `case` is the one wardrobe item parented to a HAND bone, and it is the only
+// one whose transform therefore follows an arm that the activity overlay moves.
+// The overlays were authored for the BODY and never asked what the hand was
+// holding, so, measured on the shipped poses with the rig at rest scale:
+//
+//   activity   right-hand case centre        what that is
+//   phone      (-0.19, 1.57, -0.41) m        a briefcase held against the ear
+//   talk       (-0.30, 1.52, -0.52) m        a briefcase waved at head height
+//   wait       (-0.35, 1.09, -0.54) m        a briefcase behind the back,
+//                                            through the trunk of the body
+//   carry      (-0.22, 0.62, -0.07) m        a briefcase, carried
+//
+// A reviewer measured exactly this on the round-4 night card and wrote it up as
+// "carried boxes detached from its hands and intersecting its own head". The
+// prop is NOT detached - it is welded to the hand, and the hand went to the
+// ear.
+//
+// The rule below is the one a person follows: you cannot do a thing with a hand
+// that is already holding something. A carried prop is drawn only while the
+// hand that carries it is hanging free, and is otherwise suppressed and
+// COUNTED. Suppression, not relocation: moving the case to the other hand needs
+// a second geometry chunk and therefore a second draw call, and the figure is
+// equally correct having set it down.
+
+/** Which arm each authored activity occupies. 'free' means both hands hang. */
+export const ACTIVITY_ARM_USE = Object.freeze({
+  stand: 'free',
+  carry: 'free',
+  lean: 'free',
+  phone: 'right',
+  talk: 'right',
+  browse: 'right',
+  wait: 'both',
+  listen: 'both',
+  sit: 'both',
+});
+
+/** The hand every carried prop hangs from, and the flags that are carried. */
+export const CARRIED_PROP_BONE = 'RightHand';
+export const CARRIED_PROP_FLAGS = Object.freeze(['case']);
+
+/**
+ * Is the carrying hand free while this activity runs?
+ *
+ * `mirrored` is the pose mirror the crowd and the street-life pass apply to half
+ * the population (`mirrorActivityPose`): it swaps left for right, so a
+ * right-handed gesture on a mirrored figure occupies the LEFT hand and leaves
+ * the carrying hand free.
+ */
+export function carriedHandIsFree(activity, mirrored = false) {
+  if (!activity) return true;
+  const use = ACTIVITY_ARM_USE[activity];
+  if (!use || use === 'free') return true;
+  if (use === 'both') return false;
+  const engaged = mirrored ? (use === 'right' ? 'left' : 'right') : use;
+  return engaged !== 'right';
+}
+
+/**
+ * The attachment of every carried prop, for the assertion that it IS one.
+ *
+ * A prop whose attachment transform is the identity is a prop at the wrist
+ * joint - i.e. inside the hand - which is the failure mode this reports rather
+ * than hides. Consumers draw a prop only when `attached` is true.
+ */
+export function carriedPropAttachments() {
+  const out = [];
+  for (const part of WARDROBE_PARTS) {
+    if (!CARRIED_PROP_FLAGS.includes(part.key)) continue;
+    const [ox, oy, oz] = part.offset;
+    const reach = Math.hypot(ox, oy, oz);
+    out.push(Object.freeze({
+      flag: part.key,
+      bone: part.bone,
+      offset: Object.freeze([ox, oy, oz]),
+      /** Metres from the hand joint to the prop's own origin. */
+      reach,
+      /** A hand bone drives it, and the attachment is not the identity. */
+      attached: part.bone.endsWith('Hand') && reach > 1e-3,
+    }));
+  }
+  return out;
+}
+
 // ------------------------------------------------- distance bands and budget
 
 export const PRESENTATION_BANDS = Object.freeze(['skinned', 'instanced', 'far', 'culled']);
@@ -1307,16 +1944,92 @@ export const PRESENTATION_BANDS = Object.freeze(['skinned', 'instanced', 'far', 
 /** Band rank: lower is richer. Used to compare bands under hysteresis. */
 export const BAND_RANK = Object.freeze({ skinned: 0, instanced: 1, far: 2, culled: 3 });
 
-/** Outer distance of each band, metres from the view position. */
+/**
+ * Outer distance of each band, metres from the view position.
+ *
+ * `instanced` was 90 m. The far band is ONE RIGID FIGURE: `mergeToRoot` bakes
+ * every part into character space in the rest pose and drops the skeleton, so a
+ * far agent translates without moving its legs - it glides, which is the
+ * skating the gate rejects outright. At 90 m a 1.8 m figure is still ~24 px
+ * tall in a 1080-line frame, tall enough to see that the legs are not walking.
+ *
+ * Pushing the boundary to 120 m is free against the declared budget:
+ * `planCrowdPresentation` assigns bands NEAREST FIRST under the hard caps in
+ * `CROWD_BUDGET`, so the boundary can only ever spend instanced slots that no
+ * nearer agent claimed. The worst case is the cap that was already declared -
+ * 96 instanced figures - and the triangle ceiling is unchanged at
+ * 24 x skinned + 96 x instanced + 320 x far.
+ *
+ * Beyond 120 m the far figure still glides. At that range it is under 18 px
+ * tall and the stride is sub-pixel; baking stride-phase variants there would
+ * cost geometry variants and per-agent selection for something no reviewer can
+ * resolve, so it is deliberately not done. Stated so the next round does not
+ * rediscover it as a defect.
+ */
 export const PRESENTATION_BAND_DISTANCES = Object.freeze({
   skinned: 28,
-  instanced: 90,
+  instanced: 120,
   far: 220,
 });
 
 /**
  * Hard caps. Exceeding a cap does not drop the agent, it demotes them to the
  * next cheaper band, so the crowd thins in fidelity rather than in population.
+ */
+/**
+ * BUDGET, restated for the CONTINUITY landing.
+ *
+ * Caps are unchanged. What moved is the triangles behind one instanced and one
+ * far figure, and the reason is measured rather than argued: in horizontal
+ * slices 2 mm apart through the DRAWN triangles of the rest pose, the previous
+ * tables had slices containing NO geometry at all -
+ *
+ *   far   elbow, knee, ankle, and the whole 140 mm between the top of the
+ *         shoulders and the base of the skull (there was no neck at `far`);
+ *   mid   a 15 mm slot between the head filler and the skull;
+ *   both  a 5 mm slot straight through the waist, between the top of the
+ *         pelvis frustum and the bottom of the spine frustum.
+ *
+ * A slice with nothing in it is a hole you can see the street through. Every
+ * limb primitive now crosses its own joint and is buried by the one it meets,
+ * so the closure is a property of the solid and holds at any joint angle:
+ *
+ *   instanced  456 -> 556 tri x 96  = 53 376  (+100: lofted deltoid replacing a
+ *                                              swept cylinder plus its exposed
+ *                                              joint bead, a hand, a throat
+ *                                              ring on the skull, a hair shell
+ *                                              instead of a 4-cornered slab)
+ *   far        180 -> 192 tri x 320 = 61 440  (+12: the neck)
+ *   skinned   2432 -> 2520 tri x 24 = 60 480  (+88: the lofted shoe)
+ *
+ * plus wardrobe: 186 near, 112 mid, 48 far per figure with every flag set.
+ * Whole-crowd worst case 205 872 triangles against 190 320 before.
+ *
+ * Draw calls: the mid band gains the two `*Hand|skin` chunks, 16 -> 18. The
+ * lofted deltoid, the throat ring and the hair shell merge into buckets that
+ * already existed, so they add none.
+ */
+/**
+ * Band caps. Hard: `planCrowdPresentation` can never return more.
+ *
+ * RESTATED for the lofted near coat. The caps did not move and no draw call was
+ * added; what moved is the triangles behind ONE SKINNED FIGURE THAT WEARS A
+ * COAT, because the near tier now draws the coat as a 6-sided lofted skirt
+ * instead of the 4-cornered frustum the cheaper tiers keep (`WARDROBE_PARTS`):
+ *
+ *   skinned body           2432 tri   (measured, unchanged)
+ *   + coat, was            +  12 tri
+ *   + coat, now            +  32 tri   -> +20 per coated figure
+ *   + bag strap, was       +  12 tri
+ *   + bag strap, now       +  14 tri   -> + 2 per figure with a bag
+ *   24 skinned, all laden   +528 tri   worst case for the whole band
+ *
+ * The instanced and far bands are untouched: the coat frustum is capped at
+ * `mid` and the strap was always a near-tier part, so they draw exactly what
+ * they drew before, at the same 456 / 180 triangles and the same 16 / 5 draws.
+ * The 34% coat and 26% bag rates make the expected cost about +175 triangles on
+ * a full skinned band; the number above is the bound, and a coat and a bag are
+ * mutually compatible so it is reachable.
  */
 export const CROWD_BUDGET = Object.freeze({
   skinned: 24,
@@ -1496,6 +2209,36 @@ export function restBoneWorld(name, pose = REST_POSE) {
  * animation phase and fails on any surface gap.
  *
  * ---------------------------------------------------------------------------
+ * AND WHY A JOINT FILLER IS NOT ENOUGH ON ITS OWN
+ * ---------------------------------------------------------------------------
+ * A filler proves the joint cannot OPEN when the limb rotates. It does not
+ * prove there is solid there in the first place, and at the two cheap tiers
+ * there was not. Measured on the drawn triangles - not on the table, on the
+ * baked vertices - by cutting the rest pose into horizontal slices 2 mm apart
+ * and asking which slices contain no geometry at all:
+ *
+ *   far   nothing in the slice through the elbow, the knee or the ankle, and
+ *         nothing anywhere in the 140 mm between the top of the shoulders and
+ *         the base of the skull. There was no neck at `far`; the head floated.
+ *   mid   nothing in a 15 mm band between the top of the head filler and the
+ *         base of the skull.
+ *   both  nothing in a 5 mm band straight through the waist, where the pelvis
+ *         frustum stopped at 1.035 m and the spine frustum started at 1.040 m.
+ *
+ * Each of those is a slot you can see the street through, and `far` was being
+ * drawn 13 m from the lens by the street-life pass (see its ring table). So the
+ * rule the table now follows, at EVERY tier:
+ *
+ *   every limb primitive crosses its own joint, and the one it meets there is
+ *   WIDER at the crossing, so the rim is buried inside its neighbour.
+ *
+ * That is a property of the authored solid, so it holds at any joint angle, and
+ * it is what the offsets and heights below are chosen to satisfy. Sole exactly
+ * at y = 0, thigh into pelvis, shin over knee, foot over ankle, forearm over
+ * elbow and under wrist, skull down into the neck, spine down into the pelvis.
+ * A slice with nothing in it is the assertion that fails.
+ *
+ * ---------------------------------------------------------------------------
  * DETAIL TIERS
  * ---------------------------------------------------------------------------
  *   'far'   the whole readable figure at 90-220 m: torso, head, straight limbs.
@@ -1523,66 +2266,334 @@ export function restBoneWorld(name, pose = REST_POSE) {
  */
 export const BODY_PARTS = Object.freeze([
   // ---- pelvis and torso -----------------------------------------------------
-  { bone: 'Hips', slot: 'bottom', kind: 'taper', size: [0.27, 0.175, 0.245, 0.165, 0.20], offset: [0, 0.015, 0], detail: 'far', group: 'bottom', ao: 0.35 },
-  { bone: 'Spine', slot: 'top', kind: 'taper', size: [0.285, 0.180, 0.255, 0.170, 0.17], offset: [0, 0.065, 0], detail: 'far', group: 'top', ao: 0.28 },
-  { bone: 'Chest', slot: 'top', kind: 'taper', size: [0.345, 0.205, 0.290, 0.185, 0.26], offset: [0, 0.090, 0], detail: 'far', group: 'top', ao: 0.22 },
+  // far/mid: frusta. near: lofts that replace them (see `maxDetail`).
+  { bone: 'Hips', slot: 'bottom', kind: 'taper', size: [0.27, 0.175, 0.245, 0.165, 0.20], offset: [0, 0.015, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.35 },
+  { bone: 'Spine', slot: 'top', kind: 'taper', size: [0.285, 0.180, 0.255, 0.170, 0.19], offset: [0, 0.055, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.28 },
+  { bone: 'Chest', slot: 'top', kind: 'taper', size: [0.345, 0.205, 0.290, 0.185, 0.26], offset: [0, 0.090, 0], detail: 'far', maxDetail: 'mid', group: 'top', ao: 0.22 },
+  // NEAR pelvis. The trochanter is the widest point of a standing body and the
+  // frustum did not have one, which is why the hips read as a box the legs were
+  // pushed into. The hip joint at y = -0.06 is 55 mm inside this solid, so the
+  // thigh cannot open a seam at it however far it swings.
+  { bone: 'Hips', slot: 'bottom', kind: 'loft', sides: 8, detail: 'near', group: 'bottom', ao: 0.34, offset: [0, 0, 0], size: [
+    [-0.115, 0.128, 0.094, 0, -0.006],
+    [-0.070, 0.148, 0.104, 0, -0.010],
+    [-0.020, 0.146, 0.104, 0, -0.012],
+    [ 0.045, 0.128, 0.090, 0, -0.004],
+    [ 0.100, 0.120, 0.084, 0, 0],
+  ] },
+  // NEAR shirt hem. A hem is the cheapest clothing silhouette there is: it
+  // overlaps the waistband, so the torso stops being one two-tone cylinder and
+  // starts being a shirt worn over trousers.
+  { bone: 'Hips', slot: 'top', kind: 'loft', sides: 8, detail: 'near', group: 'top', ao: 0.44, offset: [0, 0, 0], size: [
+    [ 0.006, 0.152, 0.110, 0, -0.006],
+    [ 0.060, 0.140, 0.100, 0, -0.004],
+    [ 0.132, 0.128, 0.092, 0, 0],
+  ] },
+  { bone: 'Spine', slot: 'top', kind: 'loft', sides: 8, detail: 'near', group: 'top', ao: 0.27, offset: [0, 0, 0], size: [
+    [-0.035, 0.116, 0.083, 0, 0],
+    [ 0.045, 0.128, 0.090, 0, 0.002],
+    [ 0.110, 0.142, 0.096, 0, 0.004],
+    [ 0.155, 0.150, 0.099, 0, 0.004],
+  ] },
+  // NEAR chest. The ring at y = 0.132 IS the shoulder: the solid widens to
+  // 186 mm there and falls away again to the neck, so the deltoid grows out of
+  // the torso instead of a sphere being parked beside it.
+  { bone: 'Chest', slot: 'top', kind: 'loft', sides: 8, detail: 'near', group: 'top', ao: 0.21, offset: [0, 0, 0], size: [
+    [-0.055, 0.148, 0.098, 0, 0.004],
+    [ 0.020, 0.160, 0.104, 0, 0.006],
+    [ 0.090, 0.170, 0.102, 0, 0.004],
+    [ 0.140, 0.172, 0.096, 0, 0],
+    [ 0.175, 0.144, 0.086, 0, -0.004],
+    [ 0.205, 0.098, 0.066, 0, -0.006],
+    [ 0.230, 0.076, 0.060, 0, -0.006],
+  ] },
   // Deltoid caps: the shoulder is a real corner of the body, not a hole the arm
   // hangs out of. These live on the Chest so they never rotate away from it.
-  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.072, 0.062, 0.072], offset: [0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
-  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.072, 0.062, 0.072], offset: [-0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
-  { bone: 'Chest', slot: 'accent', kind: 'box', size: [0.300, 0.042, 0.196], offset: [0, 0.196, 0.004], detail: 'near', group: 'accent', ao: 0.45 },
+  // At the near tier they are buried by the chest loft and the arm's own
+  // deltoid; at mid they are the shoulder.
+  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.062, 0.058, 0.062], offset: [0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
+  { bone: 'Chest', slot: 'top', kind: 'ball', size: [0.062, 0.058, 0.062], offset: [-0.166, 0.150, 0], detail: 'mid', group: 'top', ao: 0.30 },
   // ---- neck and head --------------------------------------------------------
   // Promoted from 'near' to 'mid': without it the head floats off the shoulders
   // at every distance the crowd is actually seen at.
-  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.046, 0.058, 0.108], offset: [0, 0.036, -0.004], detail: 'mid', group: 'skin', ao: 0.55 },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.062, 0.058, 0.062], offset: [0, 0.004, -0.002], detail: 'mid', group: 'skin', ao: 0.50 },
-  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.150, 0.180, 0.140, 0.170, 0.135], offset: [0, 0.145, 0.004], detail: 'far', group: 'skin', ao: 0.16 },
-  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.140, 0.170, 0.115, 0.140, 0.088], offset: [0, 0.037, 0.010], detail: 'near', group: 'skin', ao: 0.30 },
-  { bone: 'Head', slot: 'skin', kind: 'wedge', size: [0.032, 0.052, 0.038, 0.012], offset: [0, 0.118, 0.088], detail: 'near', group: 'skin', ao: 0.10 },
-  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.116, 0.020, 0.020], offset: [0, 0.163, 0.082], detail: 'near', group: 'skin', ao: 0.18 },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [0.076, 0.128, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
-  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.020, 0.030, 0.016], offset: [-0.076, 0.128, 0.008], detail: 'near', group: 'skin', ao: 0.35 },
-  // Hair is a shell that wraps the cranium, not a slab balanced on top of it.
-  { bone: 'Head', slot: 'hair', kind: 'taper', size: [0.156, 0.150, 0.160, 0.152, 0.052], offset: [0, 0.212, 0.002], detail: 'far', group: 'hair', ao: 0.22 },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.162, 0.150, 0.030], offset: [0, 0.150, -0.078], detail: 'near', group: 'hair', ao: 0.42 },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.026, 0.130, 0.150], offset: [0.072, 0.155, -0.006], detail: 'near', group: 'hair', ao: 0.40 },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.026, 0.130, 0.150], offset: [-0.072, 0.155, -0.006], detail: 'near', group: 'hair', ao: 0.40 },
+  { bone: 'Neck', slot: 'skin', kind: 'cyl', size: [0.046, 0.058, 0.108], offset: [0, 0.036, -0.004], detail: 'far', group: 'skin', ao: 0.55 },
+  // NEAR collar. It stands 22-26 mm proud of the neck, so the head no longer
+  // grows out of the shirt on a bare tube, and the accent band on top of it is
+  // a second colour exactly where a viewer looks first.
+  { bone: 'Neck', slot: 'top', kind: 'loft', sides: 8, detail: 'near', group: 'top', ao: 0.50, offset: [0, 0, 0], size: [
+    [-0.014, 0.076, 0.080, 0, -0.004],
+    [ 0.026, 0.084, 0.088, 0, -0.006],
+    [ 0.050, 0.070, 0.074, 0, -0.006],
+  ] },
+  { bone: 'Neck', slot: 'accent', kind: 'loft', sides: 8, detail: 'near', group: 'accent', ao: 0.46, offset: [0, 0, 0], size: [
+    [ 0.030, 0.083, 0.087, 0, -0.006],
+    [ 0.056, 0.066, 0.070, 0, -0.006],
+  ] },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.050, 0.048, 0.052], offset: [0, 0.004, -0.002], detail: 'mid', group: 'skin', ao: 0.50 },
+  // THE CRANIUM, TWICE OVER.
+  //
+  // A 4-sided frustum is 12 triangles and reads correctly at the ~4 px a head
+  // occupies in the far band. At the MID band it does not: that band now runs
+  // out to 120 m and starts at 28 m, where a head is ~10 px and six flat quads
+  // with four vertical corners read as a die balanced on a neck. That is the
+  // cube-head every review round of this build has called out, and the near
+  // tier's lofted head below only fixed it inside 28 m.
+  //
+  // So the frustum is capped at `far`, and the mid band gets its own lofted
+  // skull: five rings on an 8-gon section, base ring exactly the frustum's base
+  // so nothing below it opens a seam, widest at the cheekbone, tucked back and
+  // rounded at the crown. 76 triangles against the frustum's 12, on the mid
+  // band only - see the budget restated at `CROWD_BUDGET`.
+  { bone: 'Head', slot: 'skin', kind: 'taper', size: [0.150, 0.180, 0.140, 0.170, 0.225], offset: [0, 0.100, 0.004], detail: 'far', maxDetail: 'far', group: 'skin', ao: 0.16 },
+  { bone: 'Head', slot: 'skin', kind: 'loft', sides: 8, detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.16, offset: [0, 0, 0], size: [
+    [-0.0200, 0.0520, 0.0600, 0, 0.004],
+    [0.0775, 0.0700, 0.0850, 0, 0.004],
+    [0.1150, 0.0745, 0.0890, 0, 0.006],
+    [0.1550, 0.0750, 0.0900, 0, 0.002],
+    [0.1900, 0.0700, 0.0810, 0, -0.002],
+    [0.2125, 0.0660, 0.0720, 0, -0.006],
+  ] },
+  // NEAR head. Seven rings, and every one of them is a landmark: throat, jaw,
+  // cheekbone, brow, cranium, crown. The centre of the section moves forward
+  // through the jaw and back through the crown, which is what puts a PROFILE on
+  // the head - the thing a 4-sided frustum can never have at any size.
+  { bone: 'Head', slot: 'skin', kind: 'loft', sides: 8, detail: 'near', group: 'skin', ao: 0.28, offset: [0, 0, 0], size: [
+    [-0.030, 0.048, 0.055, 0, 0.004],
+    [ 0.012, 0.060, 0.072, 0, 0.010],
+    [ 0.058, 0.070, 0.086, 0, 0.008],
+    [ 0.108, 0.076, 0.091, 0, 0.002],
+    [ 0.158, 0.074, 0.089, 0, -0.004],
+    [ 0.198, 0.060, 0.070, 0, -0.010],
+    [ 0.218, 0.036, 0.042, 0, -0.010],
+  ] },
+  { bone: 'Head', slot: 'skin', kind: 'wedge', size: [0.030, 0.052, 0.040, -0.012], offset: [0, 0.108, 0.082], detail: 'near', group: 'skin', ao: 0.10 },
+  { bone: 'Head', slot: 'skin', kind: 'box', size: [0.100, 0.016, 0.016], offset: [0, 0.146, 0.085], detail: 'near', group: 'skin', ao: 0.18 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.013, 0.026, 0.011], offset: [0.070, 0.114, 0.004], detail: 'near', group: 'skin', ao: 0.35 },
+  { bone: 'Head', slot: 'skin', kind: 'ball', size: [0.013, 0.026, 0.011], offset: [-0.070, 0.114, 0.004], detail: 'near', group: 'skin', ao: 0.35 },
+  // Hair. far/mid keep the cap. NEAR is a shell whose rings follow the cranium
+  // rings 4-7 mm out and 16-20 mm BACK, so it meets the face at a hairline
+  // across the brow and carries the occiput - hair growing on a head rather
+  // than a slab resting on one.
+  { bone: 'Head', slot: 'hair', kind: 'taper', size: [0.156, 0.150, 0.160, 0.152, 0.052], offset: [0, 0.212, 0.002], detail: 'far', maxDetail: 'far', group: 'hair', ao: 0.22 },
+  { bone: 'Head', slot: 'hair', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'hair', ao: 0.30, offset: [0, 0, 0], size: [
+    [ 0.130, 0.078, 0.092, 0, -0.014],
+    [ 0.190, 0.075, 0.086, 0, -0.016],
+    [ 0.230, 0.050, 0.054, 0, -0.014],
+  ] },
+  { bone: 'Head', slot: 'hair', kind: 'loft', sides: 8, detail: 'near', group: 'hair', ao: 0.36, offset: [0, 0, 0], size: [
+    [ 0.118, 0.080, 0.084, 0, -0.020],
+    [ 0.152, 0.080, 0.085, 0, -0.022],
+    [ 0.196, 0.068, 0.072, 0, -0.024],
+    [ 0.228, 0.041, 0.044, 0, -0.020],
+  ] },
   // Eyes ride the hair slot: hair colours are the dark end of the palette, so an
   // eye is always darker than the face it sits in without a seventh slot.
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [0.033, 0.140, 0.078], detail: 'near', group: 'hair', ao: 0.0 },
-  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.030, 0.014, 0.014], offset: [-0.033, 0.140, 0.078], detail: 'near', group: 'hair', ao: 0.0 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.022, 0.011, 0.012], offset: [0.030, 0.126, 0.083], detail: 'near', group: 'hair', ao: 0.0 },
+  { bone: 'Head', slot: 'hair', kind: 'box', size: [0.022, 0.011, 0.012], offset: [-0.030, 0.126, 0.083], detail: 'near', group: 'hair', ao: 0.0 },
   // ---- arms -----------------------------------------------------------------
   { bone: 'LeftArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
-  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'LeftArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.262], offset: [0, -0.135, 0], detail: 'far', maxDetail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'LeftArm', slot: 'top', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'top', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.266, 0.033, 0.033, 0, 0],
+    [-0.140, 0.048, 0.048, 0, 0.002],
+    [-0.024, 0.058, 0.064, 0, 0],
+    [ 0.022, 0.052, 0.058, 0, 0],
+  ] },
+  // NEAR upper arm: deltoid (72 mm) -> mid-humerus (49 mm) -> elbow (42 mm).
+  // Its widest ring is ABOVE the shoulder joint and wider than the joint ball,
+  // so the ball never appears in silhouette; its narrowest is two thirds of the
+  // way down, so the outline is not a swept circle from any angle.
+  { bone: 'LeftArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.32, offset: [0, 0, 0], size: [
+    [-0.262, 0.042, 0.042, 0, 0.002],
+    [-0.215, 0.046, 0.045, 0, 0.004],
+    [-0.140, 0.049, 0.048, 0, 0.002],
+    [-0.055, 0.058, 0.060, 0, 0],
+    [ 0.000, 0.059, 0.068, 0, 0],
+    [ 0.030, 0.046, 0.056, 0, 0],
+  ] },
+  // NEAR sleeve. A short sleeve ending just past the elbow: 10 mm proud of the
+  // arm, which is a hard silhouette break in the shirt colour, and it buries
+  // the elbow filler so the elbow reads as a joint rather than as a bead.
+  { bone: 'LeftArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.42, offset: [0, 0, 0], size: [
+    [-0.292, 0.044, 0.044, 0, 0.002],
+    [-0.272, 0.052, 0.051, 0, 0.003],
+    [-0.240, 0.050, 0.049, 0, 0.003],
+  ] },
   { bone: 'LeftForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
-  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', group: 'skin', ao: 0.22 },
-  { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.034], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
-  { bone: 'LeftHand', slot: 'skin', kind: 'taper', size: [0.062, 0.038, 0.050, 0.028, 0.100], offset: [0, -0.054, 0], detail: 'near', group: 'skin', ao: 0.22 },
+  { bone: 'LeftForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.290], offset: [0, -0.115, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
+  // NEAR forearm: belly below the elbow, then a wrist that is WIDER THAN IT IS
+  // DEEP (29 x 24 mm). A wrist with a circular section is the single clearest
+  // tell that a limb is a swept primitive.
+  { bone: 'LeftForeArm', slot: 'skin', kind: 'loft', sides: 7, detail: 'near', group: 'skin', ao: 0.24, offset: [0, 0, 0], size: [
+    [-0.248, 0.025, 0.022, 0, 0],
+    [-0.205, 0.030, 0.026, 0, 0],
+    [-0.120, 0.038, 0.036, 0, 0.002],
+    [-0.030, 0.048, 0.046, 0, 0.004],
+    [ 0.030, 0.047, 0.045, 0, 0.002],
+  ] },
+  { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.040, 0.058, 0.034], offset: [0, -0.010, 0.003], detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.30 },
+  { bone: 'LeftHand', slot: 'skin', kind: 'ball', size: [0.038], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
+  // NEAR hand: a flattened palm...
+  { bone: 'LeftHand', slot: 'skin', kind: 'loft', sides: 6, detail: 'near', group: 'skin', ao: 0.22, offset: [0, 0, 0], size: [
+    [-0.108, 0.024, 0.014, 0, 0.004],
+    [-0.075, 0.032, 0.018, 0, 0.004],
+    [-0.030, 0.036, 0.021, 0, 0.002],
+    [ 0.016, 0.039, 0.027, 0, 0],
+  ] },
+  // ...and a thumb, angled inboard and forward off the medial edge of it. It is
+  // 26 triangles and it is the difference between a hand and a paddle: it is
+  // the only part of a hand that shows in silhouette at four metres.
+  { bone: 'LeftHand', slot: 'skin', kind: 'loft', sides: 5, detail: 'near', group: 'skin', ao: 0.26, offset: [0, 0, 0], size: [
+    [-0.062, 0.011, 0.012, -0.046, 0.017],
+    [-0.030, 0.015, 0.016, -0.036, 0.012],
+    [ 0.006, 0.017, 0.018, -0.026, 0.006],
+  ] },
   { bone: 'RightArm', slot: 'top', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'top', ao: 0.40 },
-  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.245], offset: [0, -0.132, 0], detail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'RightArm', slot: 'top', kind: 'cyl', size: [0.054, 0.038, 0.262], offset: [0, -0.135, 0], detail: 'far', maxDetail: 'far', group: 'top', ao: 0.30 },
+  { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 6, detail: 'mid', maxDetail: 'mid', group: 'top', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.266, 0.033, 0.033, 0, 0],
+    [-0.140, 0.048, 0.048, 0, 0.002],
+    [-0.024, 0.058, 0.064, 0, 0],
+    [ 0.022, 0.052, 0.058, 0, 0],
+  ] },
+  { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.32, offset: [0, 0, 0], size: [
+    [-0.262, 0.042, 0.042, 0, 0.002],
+    [-0.215, 0.046, 0.045, 0, 0.004],
+    [-0.140, 0.049, 0.048, 0, 0.002],
+    [-0.055, 0.058, 0.060, 0, 0],
+    [ 0.000, 0.059, 0.068, 0, 0],
+    [ 0.030, 0.046, 0.056, 0, 0],
+  ] },
+  { bone: 'RightArm', slot: 'top', kind: 'loft', sides: 7, detail: 'near', group: 'top', ao: 0.42, offset: [0, 0, 0], size: [
+    [-0.292, 0.044, 0.044, 0, 0.002],
+    [-0.272, 0.052, 0.051, 0, 0.003],
+    [-0.240, 0.050, 0.049, 0, 0.003],
+  ] },
   { bone: 'RightForeArm', slot: 'skin', kind: 'ball', size: [0.045], offset: [0, 0, 0], detail: 'mid', group: 'skin', ao: 0.34 },
-  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.230], offset: [0, -0.125, 0], detail: 'far', group: 'skin', ao: 0.22 },
-  { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.034], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
-  { bone: 'RightHand', slot: 'skin', kind: 'taper', size: [0.062, 0.038, 0.050, 0.028, 0.100], offset: [0, -0.054, 0], detail: 'near', group: 'skin', ao: 0.22 },
+  { bone: 'RightForeArm', slot: 'skin', kind: 'cyl', size: [0.042, 0.031, 0.290], offset: [0, -0.115, 0], detail: 'far', maxDetail: 'mid', group: 'skin', ao: 0.22 },
+  { bone: 'RightForeArm', slot: 'skin', kind: 'loft', sides: 7, detail: 'near', group: 'skin', ao: 0.24, offset: [0, 0, 0], size: [
+    [-0.248, 0.025, 0.022, 0, 0],
+    [-0.205, 0.030, 0.026, 0, 0],
+    [-0.120, 0.038, 0.036, 0, 0.002],
+    [-0.030, 0.048, 0.046, 0, 0.004],
+    [ 0.030, 0.047, 0.045, 0, 0.002],
+  ] },
+  { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.040, 0.058, 0.034], offset: [0, -0.010, 0.003], detail: 'mid', maxDetail: 'mid', group: 'skin', ao: 0.30 },
+  { bone: 'RightHand', slot: 'skin', kind: 'ball', size: [0.038], offset: [0, 0, 0], detail: 'near', group: 'skin', ao: 0.30 },
+  { bone: 'RightHand', slot: 'skin', kind: 'loft', sides: 6, detail: 'near', group: 'skin', ao: 0.22, offset: [0, 0, 0], size: [
+    [-0.108, 0.024, 0.014, 0, 0.004],
+    [-0.075, 0.032, 0.018, 0, 0.004],
+    [-0.030, 0.036, 0.021, 0, 0.002],
+    [ 0.016, 0.039, 0.027, 0, 0],
+  ] },
+  // Mirrored: the right thumb sits on the right hand's medial edge, +x.
+  { bone: 'RightHand', slot: 'skin', kind: 'loft', sides: 5, detail: 'near', group: 'skin', ao: 0.26, offset: [0, 0, 0], size: [
+    [-0.062, 0.011, 0.012, 0.046, 0.017],
+    [-0.030, 0.015, 0.016, 0.036, 0.012],
+    [ 0.006, 0.017, 0.018, 0.026, 0.006],
+  ] },
   // ---- legs -----------------------------------------------------------------
   { bone: 'LeftUpLeg', slot: 'bottom', kind: 'ball', size: [0.083], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.42 },
-  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', group: 'bottom', ao: 0.30 },
-  { bone: 'LeftLeg', slot: 'bottom', kind: 'ball', size: [0.064], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
-  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', group: 'bottom', ao: 0.26 },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'taper', size: [0.092, 0.130, 0.086, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
-  { bone: 'LeftFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
+  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.30 },
+  // NEAR thigh: deeper than it is wide, widest just under the hip, and it keeps
+  // running 28 mm past the knee joint so the knee filler stays inside it.
+  { bone: 'LeftUpLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.408, 0.058, 0.060, 0, 0.002],
+    [-0.340, 0.055, 0.057, 0, 0.004],
+    [-0.250, 0.064, 0.068, 0, 0.006],
+    [-0.130, 0.078, 0.083, 0, 0.005],
+    [-0.030, 0.086, 0.090, 0, 0.003],
+    [ 0.020, 0.074, 0.078, 0, 0],
+  ] },
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'cyl', size: [0.064, 0.038, 0.415], offset: [0, -0.1775, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
+  // NEAR shin: the calf belly is 10 mm BEHIND the shin axis and 60% of the way
+  // up, which is the profile that makes a leg read as a leg from the side.
+  { bone: 'LeftLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.26, offset: [0, 0, 0], size: [
+    [-0.418, 0.031, 0.032, 0, 0.002],
+    [-0.372, 0.030, 0.031, 0, 0],
+    [-0.260, 0.036, 0.038, 0, -0.004],
+    [-0.130, 0.050, 0.056, 0, -0.010],
+    [-0.055, 0.058, 0.064, 0, -0.010],
+    [ 0.034, 0.062, 0.064, 0, -0.002],
+  ] },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'ball', size: [0.040, 0.038, 0.040], offset: [0, 0, -0.002], detail: 'mid', group: 'shoes', ao: 0.40 },
+  // NEAR shoe. A sole, a welt, an instep and a collar, on a 6-gon section that
+  // is 2.5x longer than it is wide and carried 46 mm forward of the ankle, so
+  // the outline in plan is a shoe rather than a slab. 208 mm heel to toe.
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'loft', sides: 6, detail: 'near', group: 'shoes', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.080, 0.042, 0.104, 0, 0.046],
+    [-0.062, 0.047, 0.114, 0, 0.043],
+    [-0.036, 0.046, 0.104, 0, 0.036],
+    [-0.012, 0.045, 0.084, 0, 0.024],
+    [ 0.010, 0.043, 0.062, 0, 0.006],
+    [ 0.028, 0.041, 0.054, 0, 0.000],
+  ] },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.105], offset: [0, -0.0275, -0.005], detail: 'far', maxDetail: 'mid', group: 'shoes', ao: 0.30 },
+  { bone: 'LeftFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.051, 0.108], detail: 'mid', maxDetail: 'mid', group: 'shoes', ao: 0.24 },
   { bone: 'RightUpLeg', slot: 'bottom', kind: 'ball', size: [0.083], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.42 },
-  { bone: 'RightUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', group: 'bottom', ao: 0.30 },
-  { bone: 'RightLeg', slot: 'bottom', kind: 'ball', size: [0.064], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
-  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.060, 0.038, 0.370], offset: [0, -0.200, 0], detail: 'far', group: 'bottom', ao: 0.26 },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'ball', size: [0.048, 0.045, 0.048], offset: [0, 0, -0.003], detail: 'mid', group: 'shoes', ao: 0.40 },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'taper', size: [0.092, 0.130, 0.086, 0.150, 0.070], offset: [0, -0.042, -0.005], detail: 'far', group: 'shoes', ao: 0.30 },
-  { bone: 'RightFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.048, 0.108], detail: 'mid', group: 'shoes', ao: 0.24 },
+  { bone: 'RightUpLeg', slot: 'bottom', kind: 'cyl', size: [0.082, 0.058, 0.350], offset: [0, -0.190, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.30 },
+  { bone: 'RightUpLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.408, 0.058, 0.060, 0, 0.002],
+    [-0.340, 0.055, 0.057, 0, 0.004],
+    [-0.250, 0.064, 0.068, 0, 0.006],
+    [-0.130, 0.078, 0.083, 0, 0.005],
+    [-0.030, 0.086, 0.090, 0, 0.003],
+    [ 0.020, 0.074, 0.078, 0, 0],
+  ] },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'ball', size: [0.058], offset: [0, 0, 0], detail: 'mid', group: 'bottom', ao: 0.36 },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'cyl', size: [0.064, 0.038, 0.415], offset: [0, -0.1775, 0], detail: 'far', maxDetail: 'mid', group: 'bottom', ao: 0.26 },
+  { bone: 'RightLeg', slot: 'bottom', kind: 'loft', sides: 7, detail: 'near', group: 'bottom', ao: 0.26, offset: [0, 0, 0], size: [
+    [-0.418, 0.031, 0.032, 0, 0.002],
+    [-0.372, 0.030, 0.031, 0, 0],
+    [-0.260, 0.036, 0.038, 0, -0.004],
+    [-0.130, 0.050, 0.056, 0, -0.010],
+    [-0.055, 0.058, 0.064, 0, -0.010],
+    [ 0.034, 0.062, 0.064, 0, -0.002],
+  ] },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'ball', size: [0.040, 0.038, 0.040], offset: [0, 0, -0.002], detail: 'mid', group: 'shoes', ao: 0.40 },
+  // NEAR shoe. A sole, a welt, an instep and a collar, on a 6-gon section that
+  // is 2.5x longer than it is wide and carried 46 mm forward of the ankle, so
+  // the outline in plan is a shoe rather than a slab. 208 mm heel to toe.
+  { bone: 'RightFoot', slot: 'shoes', kind: 'loft', sides: 6, detail: 'near', group: 'shoes', ao: 0.30, offset: [0, 0, 0], size: [
+    [-0.080, 0.042, 0.104, 0, 0.046],
+    [-0.062, 0.047, 0.114, 0, 0.043],
+    [-0.036, 0.046, 0.104, 0, 0.036],
+    [-0.012, 0.045, 0.084, 0, 0.024],
+    [ 0.010, 0.043, 0.062, 0, 0.006],
+    [ 0.028, 0.041, 0.054, 0, 0.000],
+  ] },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'taper', size: [0.098, 0.130, 0.092, 0.150, 0.105], offset: [0, -0.0275, -0.005], detail: 'far', maxDetail: 'mid', group: 'shoes', ao: 0.30 },
+  { bone: 'RightFoot', slot: 'shoes', kind: 'wedge', size: [0.090, 0.058, 0.150, -0.016], offset: [0, -0.051, 0.108], detail: 'mid', maxDetail: 'mid', group: 'shoes', ao: 0.24 },
 ]);
 
 const DETAIL_RANK = { far: 0, mid: 1, near: 2 };
 export const PART_DETAIL_RANK = Object.freeze({ ...DETAIL_RANK });
+
+/**
+ * Is this part drawn at `detail`?
+ *
+ * `part.detail` is the CHEAPEST tier that draws the part, as before.
+ * `part.maxDetail` is the RICHEST tier that still draws it, and defaults to
+ * `near` - i.e. detail is inclusive upward unless a part says otherwise.
+ *
+ * The second bound is what lets a richer tier REPLACE a part rather than only
+ * add to it. The far/mid torso is a 4-sided frustum, which is the right shape
+ * for a 40-pixel figure and the wrong one for a figure two metres away; the
+ * near tier draws a lofted torso in its place. Without `maxDetail` both would
+ * be drawn, and the frustum's corners - which sit further from the body axis
+ * than any point of the loft - would poke through it as four hard ridges.
+ *
+ * Every consumer of the parts table goes through this, including
+ * `jointClosure`, so the closure proof always measures exactly the solid that
+ * is drawn at that tier and never a superset of it.
+ */
+export function partIsDrawn(part, detail = 'near') {
+  const wanted = DETAIL_RANK[detail] ?? 2;
+  const from = DETAIL_RANK[part.detail] ?? 1;
+  const to = DETAIL_RANK[part.maxDetail] ?? 2;
+  return from <= wanted && wanted <= to;
+}
 
 /**
  * The articulating joints of the rig, as `[parentBone, childBone]`.
@@ -1620,36 +2631,13 @@ export const ARTICULATING_JOINTS = Object.freeze([
  * version of this rig scored and why its arms looked detached.
  */
 export function jointCoverRadius(bone, detail = 'near') {
-  const wanted = DETAIL_RANK[detail] ?? 2;
-  let best = 0;
-  for (const part of BODY_PARTS) {
-    if (part.bone !== bone) continue;
-    if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
-    const [ox, oy, oz] = part.offset;
-    if (part.kind === 'ball') {
-      const [rx, ry = rx, rz = rx] = part.size;
-      // Inradius of the ellipsoid, reduced by how far it is off the joint.
-      const inradius = Math.min(rx, ry, rz) - Math.hypot(ox, oy, oz);
-      if (inradius > best) best = inradius;
-    } else if (part.kind === 'box') {
-      const [w, h, d] = part.size;
-      const r = Math.min(w / 2 - Math.abs(ox), h / 2 - Math.abs(oy), d / 2 - Math.abs(oz));
-      if (r > best) best = r;
-    } else if (part.kind === 'taper') {
-      const [topW, topD, botW, botD, h] = part.size;
-      const r = Math.min(
-        Math.min(topW, botW) / 2 - Math.abs(ox),
-        h / 2 - Math.abs(oy),
-        Math.min(topD, botD) / 2 - Math.abs(oz),
-      );
-      if (r > best) best = r;
-    } else if (part.kind === 'cyl') {
-      const [rTop, rBottom, h] = part.size;
-      const r = Math.min(Math.min(rTop, rBottom) - Math.hypot(ox, oz), h / 2 - Math.abs(oy));
-      if (r > best) best = r;
-    }
-  }
-  return Math.max(0, best);
+  // Delegated so the joint proof and the drawn solid can never diverge: one
+  // implementation of "how much solid is there at this point", one parts
+  // filter, one answer.
+  return coverRadiusAt(
+    BODY_PARTS.filter((part) => part.bone === bone && partIsDrawn(part, detail)),
+    [0, 0, 0],
+  );
 }
 
 /**
@@ -1677,10 +2665,9 @@ export function jointCoverRadius(bone, detail = 'near') {
  *            drawn:boolean, closed:boolean, margin:number}}
  */
 export function jointClosure(parentBone, childBone, { detail = 'near', radialSegments = 6 } = {}) {
-  const wanted = DETAIL_RANK[detail] ?? 2;
   const joint = REST_POSE[childBone]?.offset;
   const partsOf = (bone) => BODY_PARTS.filter(
-    (part) => part.bone === bone && (DETAIL_RANK[part.detail] ?? 1) <= wanted,
+    (part) => part.bone === bone && partIsDrawn(part, detail),
   );
   const parentParts = partsOf(parentBone);
   const childParts = partsOf(childBone);
@@ -1747,6 +2734,8 @@ function coverRadiusAt(parts, point) {
         h / 2 - Math.abs(dy),
         Math.min(topD, botD) / 2 - Math.abs(dz),
       );
+    } else if (part.kind === 'loft') {
+      r = loftCoverRadius(part, dx, dy, dz);
     } else {
       const [w, h, d] = part.size;
       r = Math.min(w / 2 - Math.abs(dx), h / 2 - Math.abs(dy), d / 2 - Math.abs(dz));
@@ -1754,6 +2743,40 @@ function coverRadiusAt(parts, point) {
     if (r > best) best = r;
   }
   return Math.max(0, best);
+}
+
+/**
+ * Largest ball centred at a loft-local point that is fully inside the loft.
+ *
+ * Conservative on purpose. The cross-section is an `sides`-gon inscribed in the
+ * ellipse, so its inradius is the ellipse's smaller semi-axis times
+ * `cos(pi/sides)`; the run is linear between rings, so the radius is also
+ * bounded by the distance to the nearest end cap. A loft can therefore only
+ * ever ADD to a joint's proven cover, never inflate it.
+ */
+function loftCoverRadius(part, dx, dy, dz) {
+  const rings = part.size;
+  const first = rings[0][0];
+  const last = rings[rings.length - 1][0];
+  if (dy < first || dy > last) return 0;
+  let halfW = 0;
+  let halfD = 0;
+  let cx = 0;
+  let cz = 0;
+  for (let i = 0; i < rings.length - 1; i += 1) {
+    const [ay, aw, ad, aox = 0, aoz = 0] = rings[i];
+    const [by, bw, bd, box = 0, boz = 0] = rings[i + 1];
+    if (dy < ay || dy > by) continue;
+    const t = by > ay ? (dy - ay) / (by - ay) : 0;
+    halfW = aw + (bw - aw) * t;
+    halfD = ad + (bd - ad) * t;
+    cx = aox + (box - aox) * t;
+    cz = aoz + (boz - aoz) * t;
+    break;
+  }
+  const inradius = Math.min(halfW - Math.abs(dx - cx), halfD - Math.abs(dz - cz))
+    * Math.cos(Math.PI / Math.max(3, part.sides || 8));
+  return Math.min(inradius, dy - first, last - dy);
 }
 
 /**
@@ -1833,8 +2856,82 @@ function wedgeGeometry([w, h, d, shear]) {
   return geometry;
 }
 
+/**
+ * A lofted solid: a stack of rings, each `[y, halfW, halfD, dx, dz]` in the
+ * part's own local frame, skinned with an `sides`-gon elliptical cross-section
+ * and capped at both ends.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS PRIMITIVE EXISTS
+ * ---------------------------------------------------------------------------
+ * Everything above draws a solid whose cross-section is CONSTANT in shape: a
+ * box, a frustum of a box, a swept circle. That is why a figure two metres from
+ * the lens read as a kit of tubes bolted together - measured on the round-4
+ * character card, the upper arm was a 4.0 cm circle swept 24.5 cm with a 7.2 cm
+ * sphere sitting proud of the torso beside it, so the shoulder read as a ball
+ * joint rather than as a deltoid, and the head was a 4-sided box 15 x 18 cm
+ * with a hair slab balanced on it.
+ *
+ * A loft fixes exactly that and nothing else: the cross-section is free to
+ * change size, aspect AND centre along the run, so one part can be a deltoid
+ * that swells off the torso and narrows to an elbow, a calf with its bulge
+ * behind the shin axis, or a skull with a brow, a cheekbone and a jaw. The
+ * silhouette it produces is not a swept circle at any angle, which is the
+ * property the near tier is judged on.
+ *
+ * Cost is exactly `(rings - 1) * sides * 2 + 2 * (sides - 2)` triangles, and it
+ * does NOT depend on `radialSegments`: a loft is a near-tier part, its ring
+ * count is authored, and a budget that changes when a caller passes a different
+ * segment count is a budget nobody can state. See `BODY_PARTS`.
+ */
+function loftGeometry(rings, sides) {
+  const n = Math.max(3, sides | 0);
+  const rows = [];
+  for (const ring of rings) {
+    const [y, halfW, halfD, dx = 0, dz = 0] = ring;
+    const row = [];
+    for (let i = 0; i < n; i += 1) {
+      // Half a step of phase, so an even-sided cross-section puts a FACET at
+      // the front of the body rather than an edge down the sternum.
+      const a = ((i + 0.5) / n) * TAU;
+      row.push([dx + halfW * Math.cos(a), y, dz + halfD * Math.sin(a)]);
+    }
+    rows.push(row);
+  }
+  const out = [];
+  const push = (p) => { out.push(p[0], p[1], p[2]); };
+  for (let r = 0; r < rows.length - 1; r += 1) {
+    const lower = rows[r];
+    const upper = rows[r + 1];
+    for (let i = 0; i < n; i += 1) {
+      const j = (i + 1) % n;
+      push(lower[i]); push(upper[i]); push(upper[j]);
+      push(lower[i]); push(upper[j]); push(lower[j]);
+    }
+  }
+  const bottom = rows[0];
+  const top = rows[rows.length - 1];
+  for (let i = 1; i < n - 1; i += 1) {
+    push(bottom[0]); push(bottom[i]); push(bottom[i + 1]);
+    push(top[0]); push(top[i + 1]); push(top[i]);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(out), 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+/** Triangles a loft part costs, without building it. */
+export function loftTriangleCount(part) {
+  const n = Math.max(3, (part.sides || 8) | 0);
+  return (part.size.length - 1) * n * 2 + 2 * (n - 2);
+}
+
 function makePartGeometry(part, radialSegments) {
   let geometry;
+  if (part.kind === 'loft') {
+    return loftGeometry(part.size, part.sides || 8);
+  }
   if (part.kind === 'cyl') {
     const [a, b, c] = part.size;
     geometry = new THREE.CylinderGeometry(a, b, c, radialSegments, 1, false);
@@ -1962,11 +3059,10 @@ export function buildPedestrianBodyGeometry({
   wardrobe = null,
   detail = 'near',
 } = {}) {
-  const wanted = DETAIL_RANK[detail] ?? 2;
   const parts = [
     ...BODY_PARTS,
     ...(wardrobe ? WARDROBE_PARTS.filter((part) => wardrobe[part.key]) : []),
-  ].filter((part) => (DETAIL_RANK[part.detail] ?? 1) <= wanted);
+  ].filter((part) => partIsDrawn(part, detail));
   const chunks = parts.map((part) => {
     const bone = restBoneWorld(part.bone);
     return bakePart(part, {
@@ -1991,11 +3087,10 @@ export function buildWardrobeGeometries({
   radialSegments = 5,
   mergeToRoot = false,
 } = {}) {
-  const wanted = DETAIL_RANK[detail] ?? 1;
   const out = new Map();
   const buckets = new Map();
   for (const part of WARDROBE_PARTS) {
-    if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
+    if (!partIsDrawn(part, detail)) continue;
     const bone = mergeToRoot ? ROOT_BONE_KEY : part.bone;
     let origin;
     if (mergeToRoot) {
@@ -2034,10 +3129,9 @@ export function buildInstancedPartGeometries({
   radialSegments = 5,
   mergeToRoot = false,
 } = {}) {
-  const wanted = DETAIL_RANK[detail] ?? 1;
   const buckets = new Map();
   for (const part of BODY_PARTS) {
-    if ((DETAIL_RANK[part.detail] ?? 1) > wanted) continue;
+    if (!partIsDrawn(part, detail)) continue;
     // `mergeToRoot` bakes the whole figure into CHARACTER space - feet on the
     // ground at y = 0 - so one agent-root matrix draws it. Anything else is
     // baked in BONE-local space so one matrix per bone can articulate it.
@@ -2443,11 +3537,72 @@ const _m1 = new THREE.Matrix4();
  *    time is a pure function of distance travelled, never of wall clock;
  * 3. optional two-bone foot IK snaps each ankle onto its own ground sample.
  */
+/**
+ * Restore the pose the mixer last produced, and re-snapshot it afterwards.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS - a rig defect that bent walking figures double
+ * ---------------------------------------------------------------------------
+ * `THREE.PropertyMixer.apply()` writes the blended value into the bone ONLY if
+ * it differs from the value it wrote last time; an unchanged accumulator is a
+ * deliberate early-out. Everything downstream of the mixer here - the identity
+ * locomotion style, the activity overlay, the foot IK - then MUTATES those
+ * bones. So for any bone whose blended clip value happens to be constant, the
+ * mixer stops writing and the mutation compounds, frame after frame.
+ *
+ * The walk and brisk clips hold `Spine` at a constant -3 / -7 degrees. Measured
+ * on the shipped rig before this fix, a pedestrian walking at 1.4 m/s took
+ * `applyLocomotionStyle`'s spine lean again every frame on top of the last one:
+ * the torso was 10 degrees off vertical after 4 frames, 41 degrees after 20 and
+ * 77 degrees after 40, with the head swinging down to 0.69 m - a figure folded
+ * at the waist with its head at hip height, which is exactly what the round-4
+ * night card shows in the near right quarter. It is a critical artifact under
+ * the gate ("characters visibly float, skate, clip"), and it hit only WALKING
+ * figures, which is why a stationary review pose never caught it.
+ *
+ * The fix does not touch the mixer. It restores every bone to the mixer's own
+ * last output before calling it, so the value the mixer declines to rewrite is
+ * already the correct one, and the post-mixer stages always compose onto the
+ * clip pose rather than onto their own previous result. Cost is 17 quaternion
+ * copies each way per posed figure.
+ *
+ * `verify-street-life.mjs` re-measures this over a 600-frame walk at every
+ * locomotion state and fails on any drift.
+ */
+function restoreClipPose(rig) {
+  const cache = rig.clipPose;
+  if (!cache) return;
+  for (const [name, quaternion] of cache) {
+    const node = rig.byName.get(name);
+    if (node) node.quaternion.copy(quaternion);
+  }
+}
+
+function snapshotClipPose(rig) {
+  let cache = rig.clipPose;
+  if (!cache) {
+    cache = new Map();
+    rig.clipPose = cache;
+  }
+  for (const [name, node] of rig.byName) {
+    let quaternion = cache.get(name);
+    if (!quaternion) {
+      quaternion = new THREE.Quaternion();
+      cache.set(name, quaternion);
+    }
+    quaternion.copy(node.quaternion);
+  }
+}
+
 function applyPose(rig, pose, clipDurations, footIK) {
   const root = rig.root;
   root.position.set(pose.x, pose.rootY - (pose.rootDrop || 0), pose.z);
   root.rotation.set(pose.pitch, pose.yaw, pose.roll, 'YXZ');
   root.scale.set(pose.scaleXZ, pose.scaleY, pose.scaleXZ);
+
+  // The mixer's change-detection early-out is only safe if the bones still hold
+  // what the mixer last wrote. See `restoreClipPose`.
+  restoreClipPose(rig);
 
   const { actions } = rig;
   if (actions.idle) {
@@ -2465,6 +3620,7 @@ function applyPose(rig, pose, clipDurations, footIK) {
     actions.brisk.time = pose.gaitPhase * clipDurations.brisk;
   }
   rig.mixer.update(0);
+  snapshotClipPose(rig);
 
   // Per-identity locomotion styling, on top of the shared clip. Runs before the
   // activity overlay so a stationary agent's folded arms still win, and before
@@ -2543,6 +3699,164 @@ function applyPose(rig, pose, clipDurations, footIK) {
   root.updateMatrixWorld(true);
 }
 
+// ------------------------------------------------------- the pose gate
+
+const _gv1 = new THREE.Vector3();
+const _gv2 = new THREE.Vector3();
+const _gv3 = new THREE.Vector3();
+const _gq1 = new THREE.Quaternion();
+const _identityQ = new THREE.Quaternion();
+
+/** World position of a posed bone, into `out`. Null when the bone is absent. */
+function boneWorld(rig, name, out) {
+  const node = rig.byName.get(name);
+  if (!node) return null;
+  return out.setFromMatrixPosition(node.matrixWorld);
+}
+
+/**
+ * Pull an over-tilted torso back to the limit, on the DRAWN chain.
+ *
+ * The tilt measured is the angle between the hips->head axis and the agent
+ * root's own up axis, so a figure standing normally on a slope measures zero.
+ * When it is over the limit, `Spine` and `Chest` are slerped toward their rest
+ * orientation by the fraction that removes the excess and the world matrices
+ * are rebuilt, so what the caller reads afterwards is the corrected pose and
+ * not an intention to correct it.
+ *
+ * Returns the tilt in radians BEFORE the clamp, and whether it clamped.
+ */
+export function clampTorsoTilt(rig, maxTiltRad = PRESENTATION_VALIDITY.maxTorsoTiltRad) {
+  const hips = boneWorld(rig, 'Hips', _gv1);
+  const head = boneWorld(rig, 'Head', _gv2);
+  if (!hips || !head) return { tilt: 0, clamped: false };
+  _gv3.copy(head).sub(hips);
+  const length = _gv3.length();
+  if (!(length > 1e-6)) return { tilt: 0, clamped: false };
+  _gv3.multiplyScalar(1 / length);
+  // The root's up axis: column 1 of its world matrix, normalised out of scale.
+  const up = _gq1.setFromRotationMatrix(rig.root.matrixWorld);
+  const rootUp = _gv1.set(0, 1, 0).applyQuaternion(up);
+  const tilt = Math.acos(clamp(_gv3.dot(rootUp), -1, 1));
+  if (!(tilt > maxTiltRad)) return { tilt, clamped: false };
+  // Two bones carry the bend; removing the same fraction from both keeps the
+  // curve of the spine rather than snapping one joint straight.
+  const keep = clamp(maxTiltRad / tilt, 0, 1);
+  for (const name of ['Spine', 'Chest']) {
+    const node = rig.byName.get(name);
+    if (!node) continue;
+    node.quaternion.slerp(_identityQ, 1 - keep);
+  }
+  rig.root.updateMatrixWorld(true);
+  return { tilt, clamped: true };
+}
+
+/**
+ * Everything the gate can measure on a posed rig, from the matrices that will
+ * be drawn.
+ *
+ * @param {object} rig                posed rig; `root.updateMatrixWorld` done
+ * @param {object} [options]
+ * @param {object} [options.grounding] the `sampleFootGrounding` record the pose
+ *   was built from, for the drawn-versus-asked ankle comparison
+ * @param {boolean} [options.seated]   seated figures have no stance to check
+ * @param {number} [options.rootTargetY] world height the rig root is supposed
+ *   to be drawn at, for the figures - seated ones - that have no stance foot to
+ *   measure. Omit to skip the check.
+ * @returns {{headAboveHips:number, headYaw:number, torsoTilt:number,
+ *            ankleDrift:number, rootDrift:number, contactStep:number,
+ *            finite:boolean}}
+ */
+export function measureRigPose(rig, { grounding = null, seated = false, rootTargetY = null } = {}) {
+  const out = {
+    headAboveHips: 0,
+    headYaw: 0,
+    torsoTilt: 0,
+    ankleDrift: 0,
+    rootDrift: 0,
+    contactStep: 0,
+    finite: true,
+  };
+  if (Number.isFinite(rootTargetY)) {
+    const drawnY = rig.root.matrixWorld.elements[13];
+    out.rootDrift = Math.abs(drawnY - rootTargetY);
+    if (!Number.isFinite(drawnY)) out.finite = false;
+  }
+  const hips = rig.byName.get('Hips');
+  const head = rig.byName.get('Head');
+  const chest = rig.byName.get('Chest');
+  if (!hips || !head) return out;
+  const hipsY = hips.matrixWorld.elements[13];
+  const headY = head.matrixWorld.elements[13];
+  out.headAboveHips = headY - hipsY;
+  out.finite = Number.isFinite(hipsY) && Number.isFinite(headY);
+
+  // Torso tilt off the agent's own up axis.
+  _gv1.setFromMatrixPosition(hips.matrixWorld);
+  _gv2.setFromMatrixPosition(head.matrixWorld);
+  _gv3.copy(_gv2).sub(_gv1);
+  const spineLength = _gv3.length();
+  if (spineLength > 1e-6) {
+    _gv3.multiplyScalar(1 / spineLength);
+    _gq1.setFromRotationMatrix(rig.root.matrixWorld);
+    _gv1.set(0, 1, 0).applyQuaternion(_gq1);
+    out.torsoTilt = Math.acos(clamp(_gv3.dot(_gv1), -1, 1));
+  }
+
+  // Head yaw off the chest, in the horizontal plane. Both forward vectors come
+  // from the drawn matrices, so a bone that has been rotated by anything -
+  // clip, style, overlay or a defect - is measured the same way.
+  if (chest) {
+    _gq1.setFromRotationMatrix(chest.matrixWorld);
+    _gv1.set(0, 0, 1).applyQuaternion(_gq1);
+    _gq1.setFromRotationMatrix(head.matrixWorld);
+    _gv2.set(0, 0, 1).applyQuaternion(_gq1);
+    _gv1.y = 0;
+    _gv2.y = 0;
+    if (_gv1.lengthSq() > 1e-8 && _gv2.lengthSq() > 1e-8) {
+      _gv1.normalize();
+      _gv2.normalize();
+      out.headYaw = Math.acos(clamp(_gv1.dot(_gv2), -1, 1));
+    }
+  }
+
+  if (grounding && !seated) {
+    // The DRAWN ankle against the ankle the foot solver asked for. This is the
+    // one measurement in the module that can catch a figure whose feet are not
+    // where its own grounding record says they are.
+    for (let i = 0; i < 2; i += 1) {
+      const foot = grounding.feet[i];
+      const node = rig.byName.get(i === 0 ? 'LeftFoot' : 'RightFoot');
+      if (!node || !foot) continue;
+      _gv1.setFromMatrixPosition(node.matrixWorld);
+      const drift = Math.hypot(_gv1.x - foot.ankleX, _gv1.y - foot.ankleY, _gv1.z - foot.ankleZ);
+      if (!Number.isFinite(drift)) out.finite = false;
+      else if (drift > out.ankleDrift) out.ankleDrift = drift;
+    }
+    // Both feet planted on two different surfaces.
+    if (grounding.feet[0].contact && grounding.feet[1].contact) {
+      out.contactStep = Math.abs(grounding.feet[0].groundY - grounding.feet[1].groundY);
+    }
+  }
+  return out;
+}
+
+/**
+ * Judge a measured pose. Pure; the caller owns the ledger and the drawing.
+ *
+ * @returns {string|null} the rejection reason, or null when the pose may draw.
+ */
+export function poseRejection(metrics, limits = PRESENTATION_VALIDITY) {
+  if (!metrics.finite) return 'nonFinite';
+  if (!(metrics.headAboveHips >= limits.minHeadAboveHipsM)) return 'headBelowHips';
+  if (metrics.headYaw > limits.maxHeadYawRad) return 'headYaw';
+  if (metrics.torsoTilt > limits.maxTorsoTiltRad) return 'torsoTilt';
+  if (metrics.ankleDrift > limits.maxAnkleDriftM) return 'ankleDrift';
+  if (metrics.rootDrift > limits.maxAnkleDriftM) return 'rootDrift';
+  if (metrics.contactStep > limits.maxContactStepM) return 'footSplit';
+  return null;
+}
+
 // ----------------------------------------------------------- instanced band
 
 /**
@@ -2598,6 +3912,43 @@ function createInstancedBand(name, geometries, capacity, { castShadow }) {
   return { group, meshes, materials, capacity };
 }
 
+// ---------------------------------------------------------- footprint seam
+//
+// WHERE THE BUILDING FOOTPRINTS COME FROM
+//
+// The building test is the one validity check that needs data this module does
+// not own. There are three ways to supply it, and the diagnostics say which one
+// was used, so "no rejections" is never ambiguous:
+//
+//   'option'    `createCrowdPresentation({ buildings })` or `{ insideBuilding }`
+//               - the explicit wiring, and the one to prefer. One line in the
+//               composition root: `buildings: this.city?.buildings`.
+//   'runtime'   `crowd.setBuildingFootprints(polygons)` after the world loads.
+//   'published' `publishBuildingFootprints(index)`, below. The street-life pass
+//               already builds this index from `ctx.city.buildings` for its own
+//               placement, and publishes it here so the walking crowd is gated
+//               even in a runtime that has not been rewired yet. It is READ
+//               ONLY presentation data - a set of polygons - and it is the
+//               LAST resort: an explicit option always wins.
+//   'none'      nothing was supplied. Every agent is counted in
+//               `validity.unchecked` and none is rejected for it.
+
+let publishedFootprints = null;
+
+/**
+ * Publish a footprint index for any crowd presentation that has not been given
+ * one explicitly. Pass `null` to withdraw it when the world is disposed.
+ */
+export function publishBuildingFootprints(index) {
+  publishedFootprints = index && typeof index.contains === 'function' ? index : null;
+  return publishedFootprints;
+}
+
+/** The currently published index, or null. */
+export function publishedBuildingFootprints() {
+  return publishedFootprints;
+}
+
 // ------------------------------------------------------------ the crowd
 
 /**
@@ -2630,6 +3981,8 @@ export function createCrowdPresentation(options = {}) {
     castShadow = true,
     material = null,
     groundResponseRate = 14,
+    buildings = null,
+    insideBuilding = null,
   } = options;
 
   const caps = {
@@ -2646,6 +3999,76 @@ export function createCrowdPresentation(options = {}) {
   let clipDurations = clipDurationsFor(clipSet);
   let groundSampler = typeof sampleGround === 'function' ? sampleGround : null;
   let sunElevation = sunElevationDeg;
+
+  // The validity gate's own state: an explicit footprint source, the counted
+  // ledger, and the frame-scoped index of where the accepted bodies already
+  // are. See the `validity` section above for what each rule is and why.
+  let ownFootprints = null;
+  if (typeof insideBuilding === 'function') ownFootprints = { contains: insideBuilding, count: -1 };
+  else if (buildings) ownFootprints = buildFootprintIndex(buildings);
+  let footprintSource = ownFootprints ? 'option' : 'none';
+  const validity = createValidityLedger();
+  const capsules = createCapsuleIndex();
+  // The governor's one-frame memory: this frame's decision is made from the
+  // share measured on the previous frame, so it costs no second pass.
+  let insideBuildingCount = 0;
+  let insideBuildingSuspended = false;
+
+  /** The footprint oracle in force this frame, and where it came from. */
+  function resolveFootprints() {
+    if (ownFootprints) {
+      footprintSource = footprintSource === 'runtime' ? 'runtime' : 'option';
+      return ownFootprints;
+    }
+    if (publishedFootprints) {
+      footprintSource = 'published';
+      return publishedFootprints;
+    }
+    footprintSource = 'none';
+    return null;
+  }
+
+  /**
+   * Clamp what can be clamped, measure the DRAWN bones, and judge.
+   * Counted either way; returns false when the figure must not be drawn.
+   */
+  function judgePose(rig, grounding, seated) {
+    const clamped = clampTorsoTilt(rig);
+    if (clamped.clamped) validity.clampedTorso += 1;
+    const metrics = validity.observe(measureRigPose(rig, { grounding, seated }));
+    const reason = poseRejection(metrics);
+    if (reason) {
+      validity.reject(reason);
+      return false;
+    }
+    return true;
+  }
+
+  // A carried prop's attachment is resolved once: a prop that is NOT parented
+  // to a hand bone with a real offset is never drawn at all, rather than being
+  // drawn inside a wrist.
+  const carriedProps = new Map();
+  for (const attachment of carriedPropAttachments()) {
+    carriedProps.set(attachment.flag, attachment);
+  }
+
+  /** Wardrobe with every carried prop cleared, memoised per silhouette. */
+  const unloadedWardrobe = new Map();
+  function withoutCarriedProps(wardrobe) {
+    let derived = unloadedWardrobe.get(wardrobe.silhouetteBits);
+    if (derived) return derived;
+    const flags = { ...wardrobe.flags };
+    let bits = wardrobe.silhouetteBits;
+    for (const flag of CARRIED_PROP_FLAGS) {
+      if (!flags[flag]) continue;
+      flags[flag] = false;
+      const bit = WARDROBE_FLAGS.indexOf(flag);
+      if (bit >= 0) bits &= ~(1 << bit);
+    }
+    derived = Object.freeze({ ...wardrobe, flags: Object.freeze(flags), silhouetteBits: bits });
+    unloadedWardrobe.set(wardrobe.silhouetteBits, derived);
+    return derived;
+  }
 
   // The skinned band is the <= 28 m band: it is the one a reviewer walks up to,
   // so it pays for hands, jaw, brow, nose, eyes and shoulder caps.
@@ -2754,6 +4177,13 @@ export function createCrowdPresentation(options = {}) {
     activityOverlays: 0,
     /** Distinct appearance signatures drawn this frame. */
     uniqueAppearances: 0,
+    /**
+     * The validity gate's counted ledger - the same live object every frame.
+     * `checked` agents were examined, `drawn` passed, `rejected` did not, and
+     * `reasons` says why. `buildings` names the footprint source; 'none' means
+     * the building test did not run, which is why `unchecked` exists.
+     */
+    validity,
   };
   const signatureSet = new Set();
 
@@ -2807,6 +4237,7 @@ export function createCrowdPresentation(options = {}) {
         material: rig.material,
         skeleton: rig.skeleton,
         id: null,
+        bits: 0,
       });
     }
     return skinnedActors[index];
@@ -2903,6 +4334,12 @@ export function createCrowdPresentation(options = {}) {
     stats.maxFootGroundSpeed = 0;
     stats.wardrobeInstances = 0;
     stats.activityOverlays = 0;
+    validity.reset();
+    capsules.clear();
+    insideBuildingCount = 0;
+    const footprints = resolveFootprints();
+    validity.buildings = footprintSource;
+    validity.insideBuildingSuspended = insideBuildingSuspended;
     signatureSet.clear();
     for (const key in stats.activities) stats.activities[key] = 0;
 
@@ -2922,7 +4359,6 @@ export function createCrowdPresentation(options = {}) {
       const record = memoryFor(entry.id, agent.seed);
       record.seen = stats.frame;
       const variation = record.variation;
-      signatureSet.add(record.signature);
 
       const legLength = variation.legLength;
       const speed = agent.speed;
@@ -2967,6 +4403,44 @@ export function createCrowdPresentation(options = {}) {
         if (contactSpeed > stats.maxFootGroundSpeed) stats.maxFootGroundSpeed = contactSpeed;
       }
 
+      // ---- validity gate, part 1: WHERE THE BODY IS ----------------------
+      // Run AFTER the ground sample, so a rejected agent is still counted as
+      // grounded - it did find ground, it is simply not fit to draw - and the
+      // grounding statistics keep describing the whole mirrored population.
+      validity.checked += 1;
+      let rejected = false;
+      if (footprints) {
+        if (footprints.contains(agent.x, agent.z)) {
+          insideBuildingCount += 1;
+          // THE GOVERNOR. See `maxInsideBuildingShare`: when the footprints and
+          // the walking paths disagree wholesale, the honest answer is to say
+          // so in the diagnostics, not to delete the crowd.
+          if (!insideBuildingSuspended) {
+            validity.reject('insideBuilding');
+            rejected = true;
+          }
+        }
+      } else {
+        validity.unchecked += 1;
+      }
+      if (!rejected) {
+        const separation = validity.observeSeparation(capsules.nearest(agent.x, agent.z));
+        const overlapLimit = record.overlapHold
+          ? PRESENTATION_VALIDITY.minSeparationM * PRESENTATION_VALIDITY.releaseFactor
+          : PRESENTATION_VALIDITY.minSeparationM;
+        if (separation < overlapLimit) {
+          // The nearer agent is already drawn - the plan walks nearest-first -
+          // so the one that loses is always the one further from the eye.
+          record.overlapHold = true;
+          validity.reject('overlap');
+          rejected = true;
+        } else {
+          record.overlapHold = false;
+        }
+      }
+      if (rejected) continue;
+      signatureSet.add(record.signature);
+
       // What this person is doing, resolved from simulation-owned fields only.
       // `pose === 'sit'` is an explicit seated actor; otherwise the simulation
       // may name an activity, and a stationary agent with no named activity
@@ -3009,24 +4483,51 @@ export function createCrowdPresentation(options = {}) {
       pose.lift = Math.max(1e-4, lift);
       footEuler.set(grounding.slopePitch, pose.yaw, 0, 'YXZ');
 
-      const wardrobe = record.wardrobe;
+      // ---- validity gate, part 2: WHAT THE BODY IS HOLDING ----------------
+      // A carried prop hangs from a hand bone, so it goes wherever the activity
+      // sends that hand: the shipped `phone` pose put a briefcase against the
+      // ear and `wait` put one through the back of the ribs. A prop is drawn
+      // only while its hand is free, and the suppression is counted.
+      const carrying = record.wardrobe.silhouetteBits !== 0
+        && CARRIED_PROP_FLAGS.some((flag) => record.wardrobe.flags[flag]);
+      let handFree = true;
+      if (carrying) {
+        const attachment = carriedProps.get(CARRIED_PROP_FLAGS[0]);
+        handFree = Boolean(attachment && attachment.attached)
+          && carriedHandIsFree(activity, (variation.seed & 1) !== 0);
+        if (!handFree) validity.suppressedProps += 1;
+      }
+      const wardrobe = handFree ? record.wardrobe : withoutCarriedProps(record.wardrobe);
+      let drew = false;
 
       if (entry.band === 'skinned') {
         const actor = ensureSkinnedActor(stats.skinned);
         if (actor.id !== entry.id) {
           actor.id = entry.id;
           writePalette(actor, variation);
-          // Swap in the geometry that carries this person's silhouette. Bone
-          // order and skin attributes are identical, so the existing binding
-          // keeps working.
+        }
+        // Swap in the geometry that carries this person's silhouette. Bone
+        // order and skin attributes are identical, so the existing binding
+        // keeps working. Re-checked every frame rather than only on a slot
+        // change, because the silhouette itself changes when a carried prop is
+        // suppressed.
+        if (actor.bits !== wardrobe.silhouetteBits) {
+          actor.bits = wardrobe.silhouetteBits;
           const geometry = bodyGeometryFor(wardrobe);
           if (actor.mesh.geometry !== geometry) actor.mesh.geometry = geometry;
         }
-        actor.group.visible = true;
         applyPose(actor.rig, pose, clipDurations, footIK);
+        if (!judgePose(actor.rig, grounding, seated)) {
+          actor.group.visible = false;
+          continue;
+        }
+        actor.group.visible = true;
         stats.skinned += 1;
+        drew = true;
       } else if (entry.band === 'instanced') {
         applyPose(poser, pose, clipDurations, footIK);
+        if (!judgePose(poser, grounding, seated)) continue;
+        drew = true;
         for (const item of midBand.meshes) {
           const cursor = midCursor.get(item.key) || 0;
           if (cursor >= midBand.capacity) continue;
@@ -3079,7 +4580,15 @@ export function createCrowdPresentation(options = {}) {
           }
           farCursor += 1;
           stats.far += 1;
+          drew = true;
         }
+      }
+
+      if (drew) {
+        validity.drawn += 1;
+        // Only the ACCEPTED bodies occupy space, so the overlap rule is about
+        // what is drawn and not about what was planned.
+        capsules.add(agent.x, agent.z);
       }
 
       // Contact shadow for every visible agent in every band.
@@ -3111,6 +4620,15 @@ export function createCrowdPresentation(options = {}) {
       skinnedActors[i].group.visible = false;
       skinnedActors[i].id = null;
     }
+    // Publish what the building test SAW, whether or not it acted on it, and
+    // set the governor for the next frame from it.
+    validity.insideBuilding = insideBuildingCount;
+    validity.insideBuildingShare = validity.checked > 0
+      ? insideBuildingCount / validity.checked
+      : 0;
+    insideBuildingSuspended = validity.insideBuildingShare
+      > PRESENTATION_VALIDITY.maxInsideBuildingShare;
+    stats.validity = validity;
     let draws = stats.skinned;
     for (const item of midBand.meshes) {
       item.mesh.count = midCursor.get(item.key) || 0;
@@ -3226,13 +4744,30 @@ export function createCrowdPresentation(options = {}) {
     setClips,
     getClips: () => ({ ...clipSet }),
     setGroundSampler: (fn) => { groundSampler = typeof fn === 'function' ? fn : null; },
+    /**
+     * Supply the building footprints the validity gate tests against.
+     *
+     * Accepts an index from `buildFootprintIndex`, an array of building records
+     * (`{polygon:[{x,z}...]}`), or a bare `(x,z)=>boolean`. Pass null to drop
+     * back to whatever `publishBuildingFootprints` has published.
+     */
+    setBuildingFootprints: (source) => {
+      if (!source) ownFootprints = null;
+      else if (typeof source === 'function') ownFootprints = { contains: source, count: -1 };
+      else if (typeof source.contains === 'function') ownFootprints = source;
+      else ownFootprints = buildFootprintIndex(source);
+      footprintSource = ownFootprints ? 'runtime' : 'none';
+      return ownFootprints;
+    },
+    /** The gate's live counted ledger. Same object as `stats().validity`. */
+    validity: () => validity,
     setSunElevation: (deg) => {
       if (!Number.isFinite(deg)) return;
       sunElevation = deg;
       // A high sun makes a tight dark pool; a low or absent sun makes a soft
-      // ambient one. Both keep feet attached to the pavement.
-      const sun = clamp(Math.abs(deg) / 90, 0, 1);
-      shadowMaterial.opacity = CONTACT_SHADOW.baseOpacity * lerp(0.72, 1, sun);
+      // ambient one. Both keep feet attached to the pavement, and neither
+      // paints a cast shadow the sky is not casting - see `sunElevationFactor`.
+      shadowMaterial.opacity = CONTACT_SHADOW.baseOpacity * contactShadowSunTerm(deg);
     },
     materials: { contactShadow: shadowMaterial },
     /** Exposed so a caller can retarget an external clip against this skeleton. */

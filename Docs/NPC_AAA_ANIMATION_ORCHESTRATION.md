@@ -10,7 +10,10 @@ Every NPC (core heroes, background pool, streamed district agents, player avatar
 2. Animate with **AAA-smooth locomotion**: heel-strike, weight transfer, gait blend, no skating, clean idle↔walk↔work↔cross transitions.
 3. Pass **frame-by-frame visual QA** at street distance (8–35 m) until critic approval.
 
-Civilian Mixamo robot/soldier GLBs remain **rejected**. Improve the procedural rig + BT layer until a licensed civilian pack exists.
+The formerly bundled robot-mannequin and armored-figure GLBs remain
+**rejected** as civilians and their binaries have been deleted from the tree
+(see [HERO_PEDESTRIAN_ASSET_REQUIREMENTS.md](HERO_PEDESTRIAN_ASSET_REQUIREMENTS.md)).
+Improve the procedural rig + BT layer until a licensed civilian pack exists.
 
 ## Roles that each need a dedicated tree
 
@@ -59,7 +62,7 @@ Simulation remains authoritative for position/heading. BT decides **intent** (wa
 - [ ] Streamed peds: limb **rotation** gait (not Z-offset sticks only)
 - [ ] Frame-by-frame QA: ≥12 fixed camera frames across walk/idle/work/cross; critic score ≥ 8/10
 - [ ] Verify scripts green: city-sim, streamed-agents, online avatar walk
-- [ ] No mixer/GLTF civilian regression; no xbot/soldier promotion
+- [ ] No mixer/GLTF civilian regression; no promotion of the rejected mannequin/armored candidates
 
 ## Shared progress board
 

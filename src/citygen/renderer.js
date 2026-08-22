@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { WebGPURenderer } from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// Cascaded shadow maps. This is three's own addon, a `ShadowBaseNode` attached
+// through `light.shadow.shadowNode`; three's node material calls it in place of
+// its default shadow term. No `ShaderMaterial` is constructed here, no
+// `onBeforeCompile` is assigned, and no shader source is owned by this project,
+// so the canonical WebGPU/material policy in AGENTS.md is satisfied by the
+// integration rather than waived for it.
+import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import { mulberry32, ringArea, pointInPolygon, polygonBounds, terrainHeight, clamp, hashString } from './core.js';
 import {
   createEnvironmentRig,
@@ -13,7 +20,11 @@ import {
   recommendedExposure,
   wetSurfaceGrade,
   nightPracticalProfile,
+  practicalPointLightIntensity,
+  baselineFillCurve,
   blackBodyColor,
+  BASELINE_LIGHT_RIG,
+  PRACTICAL_REFERENCE_ALBEDO,
   SHADOW_FIT_DEFAULTS,
   SHADOW_TEXEL_DENSITY_RANGE,
 } from '../render/environment-ibl.js';
@@ -23,6 +34,10 @@ import {
   preloadDetailMaps,
   disposeAllDetailMaps,
   detailMapCacheStats,
+  setDetailResolutionPolicy,
+  getDetailResolutionPolicy,
+  reliefTexelMillimetres,
+  composeBumpRelief,
   uvScalePerMetre,
 } from '../render/detail-maps.js';
 import {
@@ -43,14 +58,20 @@ import {
   recommendShadowBias,
   SHADOW_ROLES,
   SHADOW_CASTER_VERSION,
+  MIN_THICKNESS_TEXELS,
   MEASURED_TEXEL_WORLD_SIZE,
   MEASURED_RING_RADIUS,
 } from '../render/shadow-casters.js';
+import {
+  planCascadeTexelBudget,
+  SUN_SHADOW_CASCADE_VERSION,
+} from '../render/sun-shadow-cascade.js';
 import {
   createCrowdPresentation,
   PEDESTRIAN_PRESENTATION_VERSION,
 } from '../simulation/pedestrians/pedestrian-presentation.js';
 import { createPassRuntime } from '../render/pass-registry.js';
+import { createPostChain, POST_CHAIN_VERSION } from '../render/post-chain.js';
 import { PASSES } from '../render/passes/index.js';
 
 const PALETTES = Object.freeze({
@@ -129,11 +150,45 @@ const GROUND_MATERIAL_ANISOTROPY = 8;
 
 // --- Presentation upgrade passes --------------------------------------------
 // Procedural detail maps are baked once at load and shared by every mesh that
-// uses a surface class. 256 px per tile keeps the whole bake under half a
-// second while still resolving above one texel per centimetre at the tile
-// sizes these classes declare.
+// uses a surface class.
+//
+// Resolution is PER CLASS, not one global constant, because each class declares
+// its own `metresPerRepeat`: one number produces a different physical relief
+// frequency on every surface. The old global 256 measured
+//
+//     footway  3.0 m / 256 = 11.72 mm per relief texel
+//     asphalt  1.5 m / 256 =  5.86 mm per relief texel
+//
+// which is 3-6 screen pixels per texel at the 2-4 m the camera stands at on the
+// street cards, and coarser than the micro-relief program in detail-maps.js is
+// tuned for. The two surfaces the camera stands ON go to 1024 (2.93 mm and
+// 1.46 mm); the facade classes, which are seen at 8-40 m and are already
+// carrying a painted albedo at their own frequency, stay at 512.
+//
+// Measured in node, six classes, cold cache, both call sites exercised
+// (renderer preload + a facade-articulation-shaped call that states no
+// resolution):
+//
+//   round 4   1.26 s   10 bundles   11.0 MiB RGBA   (~14.7 MiB with mips)
+//   shipped   2.80 s    6 bundles   24.0 MiB RGBA   (~32.0 MiB with mips)
+//   delta    +1.54 s                     +13.0 MiB
+//
+// TEN bundles for six classes is the second defect, not a typo: round 4 pinned
+// the preload to 256 while `facade-articulation` called `applyDetailMaps` with
+// no resolution at all, so `defaultResolution` (512) applied and a SECOND full
+// RGBA set of the four facade classes was baked and uploaded, at a different
+// frequency, for the same walls. The per-class policy in detail-maps.js is now
+// the fallback an unspecified call resolves through, so both call sites land on
+// one bundle per class and the duplicate is gone. That is why quadrupling the
+// ground resolution costs +13 MiB rather than +21 MiB.
+//
+// For reference at the extremes: 256 everywhere bakes in 0.76 s / 3.0 MiB and
+// 1024 everywhere in 6.33 s / 48.0 MiB. Boot was 37 s in round 4, so +1.5 s is
+// 4% of boot and none of it is per-frame.
 const DETAIL_MAP_PASS = 'detail-maps-v1';
-const DETAIL_MAP_OPTIONS = Object.freeze({ resolution: 256 });
+const DETAIL_MAP_GROUND_RESOLUTION = 1024;
+const DETAIL_MAP_FACADE_RESOLUTION = 512;
+const DETAIL_MAP_GROUND_CLASSES = Object.freeze(['asphalt', 'sidewalk-concrete']);
 const DETAIL_MAP_CLASSES = Object.freeze([
   'brick', 'stucco', 'painted-concrete', 'glass-curtain', 'asphalt', 'sidewalk-concrete',
 ]);
@@ -204,6 +259,28 @@ const FACADE_DEPTH_GLASS = Object.freeze({ color: '#3f5a68', roughness: 0.16, me
 const LEGACY_SIDEWALK_LIFT = 0.102;
 const STREET_GUTTER_DEPTH = 0.04;
 const STREET_SURFACE_PASS = 'street-surface-v2';
+
+/** Empty night-practical diagnostics, so every reset path has the same shape. */
+function createNightPracticalDiagnostics() {
+  return {
+    pass: NIGHT_PRACTICAL_PASS,
+    candidates: 0,
+    budget: {
+      pointLights: 0,
+      requestedPointLights: 0,
+      shadowPointLights: 0,
+      shadowMapSize: 0,
+      shadowReach: null,
+      cubeFacesPerRefresh: 0,
+      shadowDepthBytes: 0,
+      lightLoopPerFragment: 0,
+      previousLightLoopPerFragment: 6,
+    },
+    active: 0,
+    shadowRefreshes: 0,
+    decalFade: { state: 'idle', reason: null, meshes: 0, vertices: 0, faded: 0 },
+  };
+}
 
 /** Empty facade-relief diagnostics, so every reset path has the same shape. */
 function createFacadeDepthDiagnostics() {
@@ -281,6 +358,82 @@ const NIGHT_KEY_ALTITUDE_DEG = 52;
 // Refit only when something the fit actually reads has moved. Half a texel of
 // camera travel is the point at which the snapped centre can step.
 const SUN_SHADOW_REFIT_EPSILON = 0.05;
+
+// --- sun shadow cascades ----------------------------------------------------
+//
+// One 2048 map over 150 m of view depth measures 6.855 texels/m in the round-4
+// capture (14.59 cm texels). The caster policy prices that at a 21.9 cm
+// thickness floor and consequently refuses 165 of 340 meshes: every tree,
+// pole, sign, railing and small prop in the city casts nothing at all. Density
+// and reach are inversely coupled at a fixed map size, so a single box cannot
+// fix that without either giving up the reach or quadrupling the memory.
+//
+// A cascade breaks the coupling by giving each depth slice its own box.
+// `planCascadeTexelBudget` in ../render/sun-shadow-cascade.js reproduces the
+// split and the box sizing `CSMShadowNode` actually performs - checked against
+// the node itself, headless, at three field-of-view settings and cascade
+// counts 2-4, agreeing on every half-extent to under a millimetre - so these
+// are measured numbers rather than intentions. At fov 47, 16:9, near 0.5,
+// maxFar 250, 2048 per cascade, as "texel size / caster thickness floor":
+//
+//   n  cascade 0                cascade 1               cascade 2
+//   1  0.5-250 m 21.65/32.5 cm
+//   2  0.5-69 m   5.94/ 8.9     69-250 m 21.65/32.5
+//   3  0.5-44 m   3.83/ 5.8     44-99 m   8.62/12.9    99-250 m 21.65/32.5
+//   4  0.5-33 m   2.86/ 4.3     33-69 m   5.94/ 8.9     69-121 m 10.44/15.7
+//
+// At the 58 deg canyon fov every figure grows by about 27%: three cascades
+// give 4.88/7.3, 10.98/16.5 and 27.60/41.4 cm.
+//
+// Three is the first count whose near cascade clears the excluded set: the
+// thinnest excluded example in the round-4 histogram is a 0.118 m transit
+// support, and a 5.8 cm floor admits it with 2.0x margin (7.3 cm and 1.6x at
+// the canyon fov), as it does the 0.14 m shopfront awnings, sign plates,
+// railings and lamp columns.
+//
+// The cost is literal and is stated here rather than discovered later:
+//
+//   * one more full shadow render pass per frame per cascade. Round 4 drew one
+//     such pass inside a 65-110 s card on the WebGL2 software fallback, with
+//     ~175 caster draws in it; three cascades draw roughly 340 / 220 / 150 and
+//     rasterise 3 x 2048^2 of depth instead of 1. Treat 1.3-2.2x per card as
+//     the working estimate until a round measures it - it is an estimate, not
+//     a measurement, and `?cascades=1` is how it gets measured;
+//   * 3 x 2048^2 render targets. Three allocates a colour attachment and a
+//     depth texture per shadow map, so 48 MB of depth plus 48 MB of colour.
+//     That is 12.6 M texels against the 16.8 M a single 4096 map would take -
+//     and a standing note above suspects exactly that 4096 allocation failing
+//     SILENTLY on this backend. `syncShadowCascade` therefore reads back every
+//     cascade's actual target size and logs a mismatch as an error instead of
+//     assuming it worked. `?shadowMap=1024` drops the rig to 3.1 M texels,
+//     below round 4's own 4.2 M, if allocation turns out to be the ceiling.
+//
+// `?cascades=1` restores the single-box rig exactly, which is how the next
+// round attributes the spend.
+const SUN_SHADOW_CASCADES = 3;
+// The depth CSM splits over. Note this is NOT the same quantity as
+// `SUN_SHADOW_DISTANCE`: the single-box fit extrudes its box along the sun and
+// so keeps writing shadows past its nominal distance (the planner measures
+// 273-543 m of axial reach at a 150 m setting), whereas a cascade's authority
+// ends exactly at `maxFar` and beyond it every fragment is unshadowed. 250 m
+// is chosen so the hard cut-off sits no closer than the single-box rig's, and
+// still well inside the 281 m fog start the atmosphere pass reports.
+// `?shadowFar=150` trades it back for 2.32 cm near texels; the table is in
+// `planCascadeTexelBudget`.
+const SUN_SHADOW_MAX_FAR = 250;
+// Layer bits 1..4 select which cascade rasterises a mesh; bit 0 is untouched,
+// so every object stays visible to the main camera, to a raycast and to every
+// other pass exactly as before. A cascade camera tests {0, 1+i}: bit 0 is in
+// the mask deliberately, so a caster created after the policy pass and never
+// tagged is drawn into EVERY cascade rather than disappearing from all of them.
+// The shadow pass filters on `castShadow` independently, so a non-caster on
+// bit 0 is still never rasterised.
+const SUN_SHADOW_CASCADE_LAYER = 1;
+// How far behind the frustum slice the cascade's light is placed, in metres.
+// A caster's top is at most `height * sin(altitude)` deeper in light space
+// than its base, so a margin at or above the tallest caster guarantees no tall
+// building is clipped out of the near cascade at low sun.
+const SUN_SHADOW_LIGHT_MARGIN_PAD = 40;
 
 /** Detail-map `repeat` for UVs measured in tiles of `metresX` x `metresY`. */
 function detailRepeatForUvTile(className, metresX, metresY) {
@@ -1867,6 +2020,308 @@ function shade(color, amount) {
   return c;
 }
 
+/**
+ * Capture-round overrides for the image pipeline, read once at construction.
+ *
+ * A round needs to attribute cost without evaluating JavaScript mid-run, so
+ * every stage is reachable from the URL: `?post=off`, `?ao=off`, `?aa=fxaa`,
+ * `?aa=none`, `?aoScale=0.35`, `?aoRadius=1.5`, `?samples=0`. Defaults are
+ * production behaviour; an unparsable value is ignored rather than obeyed.
+ */
+function readPostChainOptions() {
+  const options = {};
+  let params = null;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch (error) {
+    params = null;
+  }
+  const override = (typeof window !== 'undefined' && window.__QA_POST__) || null;
+  const read = (key) => (params ? params.get(key) : null);
+  const off = (value) => value === 'off' || value === '0' || value === 'false';
+  const post = read('post');
+  if (off(post)) options.enabled = false;
+  const aoFlag = read('ao');
+  const ao = {};
+  if (off(aoFlag)) ao.enabled = false;
+  const aoScale = Number(read('aoScale'));
+  if (Number.isFinite(aoScale) && aoScale > 0 && aoScale <= 1) ao.resolutionScale = aoScale;
+  const aoRadius = Number(read('aoRadius'));
+  if (Number.isFinite(aoRadius) && aoRadius > 0 && aoRadius <= 8) ao.radius = aoRadius;
+  const aoNormals = read('aoNormals');
+  if (aoNormals === 'depth' || aoNormals === 'mrt') ao.normalSource = aoNormals;
+  if (Object.keys(ao).length) options.ao = ao;
+  const aa = read('aa');
+  if (aa) options.antialias = aa;
+  const samples = read('samples');
+  if (samples !== null && Number.isFinite(Number(samples))) options.sceneSamples = Number(samples);
+  return override ? { ...options, ...override } : options;
+}
+
+/**
+ * Capture-round overrides for the sun shadow rig, read once at construction.
+ *
+ * Three cascades is three shadow render passes per frame. On the software
+ * rasterizer the capture path runs on, that is the single largest thing this
+ * change spends, and a round cannot attribute a cost it cannot switch off. So
+ * the rig is reachable from the URL - `?cascades=1` is the single-box rig this
+ * replaces, `?cascades=0` disables the light's shadow entirely,
+ * `?shadowMap=1024`, `?shadowFar=150` - and from `window.__QA_SHADOW__` for a
+ * harness that would rather not rebuild the URL.
+ *
+ * Read ONCE, at construction, and deliberately not settable afterwards: the
+ * cascade count is baked into the node graph the first time a material
+ * compiles, so a mid-session change would report a count the shaders do not
+ * have. `setShadowCascades()` says so rather than pretending.
+ */
+// --- Night practicals: real camera-local light ------------------------------
+//
+// The gate lists "night scene carried solely by uniformly emissive windows
+// rather than local lighting and material response" as an AUTOMATIC rejection.
+// Round 4 was in exactly that state and the mechanism, not the art, was why:
+// six PointLights for the whole map, and 240 lamp pools + 240 carriageway
+// throws drawn as additive alpha DECALS. A decal is paint. It does not fall off
+// with the inverse square, it does not pick up the roughness of what it lands
+// on, it does not stop at a bollard, and it puts nothing on a pedestrian's
+// face. The lamp globe glowed and the pavement under it stayed neutral grey.
+//
+// So: a resident pool of real point lights, camera-local, with the nearest few
+// casting a real short-range shadow, and the painted pools cross-faded out
+// underneath them so the two never double up.
+//
+// COST, and how it is contained. Two costs, and only one of them is paid on
+// every card:
+//
+//   1. The light loop. Three unrolls one contribution per light in the scene
+//      into every lit material, and a light at intensity 0 still executes.
+//      Residency is deliberate - `visible = false` would drop the light from
+//      the render list, change the light hash, and rebuild every pipeline at
+//      dusk, which is the transition budget this pool was cut to three for in
+//      the first place - so 24 lights is 24 evaluations per lit fragment, day
+//      and night alike, against round 4's 6. That is the real price of this
+//      change and it is why the count is a URL parameter.
+//   2. The cube shadow passes. A shadowed PointLight is SIX depth renders.
+//      Those are made near-free by turning `shadow.autoUpdate` off: the maps
+//      are re-rendered only on a frame where the active light set actually
+//      changed (throttled to 4 Hz), not every frame. A pinned capture pose
+//      pays this once or twice for the whole card, and a daylight card never
+//      pays it at all.
+// --- rain ---------------------------------------------------------------------
+//
+// All five round-4 reviewers scored water 1/5 and every one of them said the
+// same thing about the drizzle card: no particles, no streaks, no droplets. The
+// SURFACE response is the half the rubric weights ("rain/wetness with
+// physically legible roughness changes") and it lives in
+// `applyEnvironmentGrading` and in the sky-atmosphere pass's puddle sheen. This
+// is the other half, and it is the cheap one.
+//
+// Shape of the implementation, and why it costs almost nothing per frame:
+//
+//  * One `InstancedMesh` of crossed quads, so a streak reads from any azimuth
+//    without per-frame billboarding. One draw call, `RAIN_BUDGET.triangles`
+//    triangles, built once and only when a wet bucket is first requested.
+//  * The instances never move relative to each other. Drops are distributed
+//    uniformly through a box of height `RAIN_CELL_HEIGHT`, so falling is a
+//    single group translation wrapped modulo that height - the distribution is
+//    invariant under the wrap, which is what makes a two-float update
+//    indistinguishable from animating 900 matrices.
+//  * The box travels with the camera in x/z, so the volume is always where the
+//    lens is and no drop is ever drawn where it cannot be seen.
+//
+// Display-referred, like the practicals: `toneMapped` is false and the colour
+// is a display value, because a rain streak is a specular glint of the sky
+// rather than a diffusely lit surface, and quoting it in scene units would
+// make it swing with an exposure that ranges over 0.68..1.55 across the day.
+const RAIN_PASS = 'rain-streaks-v1';
+const RAIN_BUDGET = Object.freeze({
+  streaks: 900,
+  /** Crossed quads: 2 planes x 2 triangles per streak. */
+  triangles: 900 * 4,
+  drawCalls: 1,
+});
+/** Radius of the camera-anchored column drops are drawn in, metres. */
+const RAIN_RADIUS = 26;
+/** Height of the wrap cell. Drops are uniform in it, so the wrap is invisible. */
+const RAIN_CELL_HEIGHT = 24;
+/** Streak size, metres. A drizzle streak is short; a downpour's is not. */
+const RAIN_STREAK = Object.freeze({ length: 0.42, width: 0.013 });
+/**
+ * Fall speed, m/s. Drizzle drops are 0.2-0.5 mm and fall at 1-2 m/s in still
+ * air; the streak is drawn longer than one frame's travel, so the apparent
+ * speed is set a little above terminal to keep the motion readable at the 1/60
+ * exposure a still capture implies.
+ */
+const RAIN_FALL_SPEED = 6.2;
+/** Wind tilt from vertical, radians. */
+const RAIN_TILT = 0.14;
+/**
+ * Peak display level of a streak, out of 255, and the wetness at which the
+ * whole element switches on. `fog` carries wetness 0.3 and is deliberately
+ * below the threshold: fog is not rain.
+ */
+const RAIN_PEAK_DISPLAY = 168;
+const RAIN_WETNESS_THRESHOLD = 0.5;
+
+const NIGHT_PRACTICAL_PASS = 'night-practicals-v2';
+// Which display peak each fixture role is solved against, and the ramp that
+// switches it on. All three numbers come out of `nightPracticalProfile`; the
+// only thing chosen here is which of its peaks belongs to which fixture.
+//
+// A neon sign is not a luminaire: it is a small coloured source whose job is to
+// put its own hue on the wall and the footway beside it, so it is quoted at a
+// share of the shopfront spill rather than at a pool peak of its own. 0.55 is
+// the share at which a sign reads as a coloured wash on the wall next to it
+// instead of as a second shopfront.
+//
+// `dryPeakDisplay`, not `peakDisplay`: a painted pool's peak rises in the rain
+// because the decal stands in for the specular streak as well as the light
+// landing on the road, and a real fixture's output does not. Solving a point
+// light against the wet peak double-counts the wetness `applyEnvironmentGrading`
+// is already applying through roughness and albedo, and on the canonical 21:30
+// drizzle rig it asks for 2.2x the clear intensity - past the solver's clamp.
+const PRACTICAL_ROLES = Object.freeze({
+  'street-lamp': Object.freeze({ peak: (p) => p.pool.dryPeakDisplay, ramp: (p) => p.lampsOn }),
+  shopfront: Object.freeze({ peak: (p) => p.shopSpill.dryPeakDisplay, ramp: (p) => p.dusk }),
+  sign: Object.freeze({ peak: (p) => p.shopSpill.dryPeakDisplay * 0.55, ramp: (p) => p.dusk }),
+});
+const NIGHT_LIGHT_POOL_SIZE = 24;
+const NIGHT_LIGHT_SHADOW_COUNT = 2;
+const NIGHT_LIGHT_SHADOW_MAP_SIZE = 256;
+// NOT a constant this code gets to choose: three's `PointLightShadow.updateMatrices`
+// overwrites `shadow.camera.far` with `light.distance` on every update
+// (node_modules/three/src/lights/PointLightShadow.js:90). The shadow's reach is
+// therefore the fixture's own throw - 28 m for a street lamp, 16 m for a
+// shopfront - and the only way to shorten it is to shorten the light. Recorded
+// here so the next reader does not set a far value and believe it.
+// Where a real light takes over from the painted pool, as fractions of that
+// light's own `distance`. Inside `inner` the decal is fully gone; beyond
+// `outer` it is untouched, which is most of the city.
+const NIGHT_DECAL_FADE_INNER = 0.15;
+const NIGHT_DECAL_FADE_OUTER = 0.75;
+// The decal meshes the fade owns. `sky-atmosphere:bulb-glows` is deliberately
+// NOT here: that is the glow around the fixture itself, not light claimed to be
+// landing on the ground, and a real point light does not replace it.
+const NIGHT_DECAL_MESHES = Object.freeze([
+  'sky-atmosphere:light-pools',
+  'sky-atmosphere:road-pools',
+  'sky-atmosphere:shop-spill',
+]);
+
+/**
+ * Night-practical options, read once pre-boot.
+ *
+ *   ?nightLights=6         the round-4 pool size, for a matched A/B
+ *   ?nightShadows=0        no cube shadow passes at all
+ *   ?nightShadowMap=512
+ *   ?decalFade=off         painted pools left at full strength under the lights
+ *   ?practicalSolve=off    hand-authored intensities, for a matched A/B
+ *   window.__QA_NIGHT__ = { lights, shadows, shadowMapSize, decalFade, practicalSolve }
+ */
+function readNightLightOptions() {
+  let params = null;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    params = null;
+  }
+  const read = (key) => (params ? params.get(key) : null);
+  const int = (value, min, max) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const options = {
+    lights: int(read('nightLights'), 0, 64) ?? NIGHT_LIGHT_POOL_SIZE,
+    shadows: int(read('nightShadows'), 0, 8) ?? NIGHT_LIGHT_SHADOW_COUNT,
+    shadowMapSize: int(read('nightShadowMap'), 64, 1024) ?? NIGHT_LIGHT_SHADOW_MAP_SIZE,
+    decalFade: read('decalFade') !== 'off',
+    // `?practicalSolve=off` falls back to the hand-authored candidate
+    // intensities, which is the matched A/B for the display-referred solve.
+    practicalSolve: read('practicalSolve') !== 'off',
+  };
+  const override = (typeof window !== 'undefined' && window.__QA_NIGHT__) || null;
+  return Object.freeze(override ? { ...options, ...override } : options);
+}
+
+/**
+ * Detail-map bake options, read once pre-boot so a capture can price the
+ * resolution change instead of inferring it.
+ *
+ *   ?detailRes=512        both bands
+ *   ?groundDetail=512     carriageway + footway only
+ *   ?facadeDetail=1024    facade classes only
+ *   ?detailBump=off       stock exclusive normal chain (bumpMap unreachable)
+ *   window.__QA_DETAIL__ = { ground, facade, composeBump }
+ *
+ * `?groundDetail=256&facadeDetail=256` reproduces the round-4 bake exactly,
+ * except that facade-articulation no longer bakes its own duplicate set.
+ */
+function readDetailMapOptions() {
+  let params = null;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    params = null;
+  }
+  const read = (key) => (params ? params.get(key) : null);
+  const size = (value) => {
+    const n = Number(value);
+    return Number.isInteger(n) && n >= 64 && n <= 2048 ? n : null;
+  };
+  const both = size(read('detailRes'));
+  const options = {
+    ground: size(read('groundDetail')) ?? both ?? DETAIL_MAP_GROUND_RESOLUTION,
+    facade: size(read('facadeDetail')) ?? both ?? DETAIL_MAP_FACADE_RESOLUTION,
+    composeBump: read('detailBump') !== 'off',
+  };
+  const override = (typeof window !== 'undefined' && window.__QA_DETAIL__) || null;
+  return Object.freeze(override ? { ...options, ...override } : options);
+}
+
+function readShadowRigOptions() {
+  let params = null;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    params = null;
+  }
+  const read = (key) => (params ? params.get(key) : null);
+  const options = {
+    cascades: SUN_SHADOW_CASCADES,
+    mapSize: SUN_SHADOW_MAP_SIZE,
+    maxFar: SUN_SHADOW_MAX_FAR,
+  };
+  // `Number(null)` is 0, not NaN, so a *missing* parameter must be rejected
+  // before it is coerced. `?cascades=` is the one knob here whose valid range
+  // includes 0, so an absent parameter used to read as "shadows off" and
+  // silently disabled the whole rig on every run that did not ask for it.
+  const num = (key) => {
+    const raw = read(key);
+    return raw === null || raw === '' ? null : Number(raw);
+  };
+  const cascades = num('cascades');
+  // Whether the cascade count was ASKED FOR, as opposed to defaulted. The
+  // backend policy in `applyBackendShadowRigPolicy` drops an un-asked-for
+  // cascade to the single box on a backend that cannot render it, and must
+  // not silently overrule a round that explicitly requested `?cascades=3`.
+  let cascadesExplicit = false;
+  if (cascades !== null && Number.isInteger(cascades) && cascades >= 0 && cascades <= 4) {
+    options.cascades = cascades;
+    cascadesExplicit = true;
+  }
+  const mapSize = num('shadowMap');
+  if (mapSize !== null && Number.isInteger(mapSize) && mapSize >= 256 && mapSize <= 4096) {
+    options.mapSize = mapSize;
+  }
+  const maxFar = num('shadowFar');
+  if (maxFar !== null && Number.isFinite(maxFar) && maxFar >= 20 && maxFar <= 2000) {
+    options.maxFar = maxFar;
+  }
+  const override = (typeof window !== 'undefined' && window.__QA_SHADOW__) || null;
+  if (override && Object.prototype.hasOwnProperty.call(override, 'cascades')) cascadesExplicit = true;
+  options.cascadesExplicit = cascadesExplicit;
+  return Object.freeze(override ? { ...options, ...override, cascadesExplicit } : options);
+}
+
 export class CityRenderer {
   constructor(container, { pixelRatioCap = 1.5 } = {}) {
     this.container = container;
@@ -1889,9 +2344,25 @@ export class CityRenderer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatioCap));
     if (!sceneCanvas) container.appendChild(this.renderer.domElement);
-    // A restrained filmic grade keeps the pastel material palette intact and
-    // avoids turning large real-map facades into neon color fields.
-    this.renderer.domElement.style.filter = 'saturate(1.16) contrast(1.04) brightness(1.01)';
+    // The restrained filmic grade that used to live here as a CSS
+    // `domElement.style.filter` now lives in the node graph, after
+    // `renderOutput`. It sat outside colour management, was invisible to every
+    // pixel readback we have taken of these frames, and its `contrast(1.04)`
+    // pivoted on 0.5 - which clipped everything under 4.9/255 display to black
+    // and so destroyed the very shadow toe `SHADOW_DISPLAY_FLOOR` and
+    // `BLACK_FLOOR_STEPS` exist to protect. See src/render/post-chain.js.
+    this.renderer.domElement.style.filter = '';
+    // The image pipeline itself is built in `initialize()`, once the backend
+    // is known. Declared here so a caller that never initialises still sees a
+    // well-formed handle rather than `undefined`.
+    this.postChain = null;
+    this.postChainOptions = readPostChainOptions();
+    this.postChainDiagnostics = {
+      version: POST_CHAIN_VERSION,
+      built: false,
+      enabled: false,
+      reason: 'not initialised',
+    };
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -1986,10 +2457,23 @@ export class CityRenderer {
     this.lampLights = [];
     this.lightPools = [];
     this.neonLights = [];
+    /** Display-referred solve for the resident practical pool. @see planPracticalLights */
+    this.practicalPlan = null;
+    /** Real solar altitude in degrees; null until the first `setTimeOfDay`. */
+    this.solarAltitudeDeg = null;
+    /** Sun and key published separately. @see setKeyDirectionFromSun */
+    this.solarDiagnostics = null;
+    /** Rain volume, built lazily on the first wet bucket. @see ensureRain */
+    this.rain = null;
+    this.rainFailed = false;
+    this.appliedPracticalPlanSignature = null;
+    this.rainDiagnostics = { pass: RAIN_PASS, built: false, reason: 'not requested yet' };
     this.localLightCandidates = [];
     this.localLightPool = [];
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
+    this.localDecalFade = null;
+    this.localLightDiagnostics = createNightPracticalDiagnostics();
     this.streetLampRecords = [];
     this.streetLampDiagnostics = {
       source: null,
@@ -2013,9 +2497,32 @@ export class CityRenderer {
       gradedMaterials: 0,
       envMapIntensity: null,
       lightRig: null,
+      wet: null,
+      wetness: null,
       textureReady: false,
+      // What the prefiltered probe actually baked, including the solar disc
+      // intensity and the cache fingerprint that separates one rig
+      // configuration from another. A flat probe and a probe with a sun in it
+      // are indistinguishable from `textureReady` alone.
+      probe: null,
     };
-    this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy: null, ...detailMapCacheStats() };
+    // Read once, pre-boot, like the shadow rig options: the bake happens in
+    // `initialize()` and the resolution is baked into the bundle cache key.
+    this.detailMapOptions = readDetailMapOptions();
+    this.nightLightOptions = readNightLightOptions();
+    this.detailMapDiagnostics = {
+      pass: DETAIL_MAP_PASS,
+      anisotropy: null,
+      ...detailMapCacheStats(),
+      resolution: null,
+      requested: { ground: this.detailMapOptions.ground, facade: this.detailMapOptions.facade },
+      bakeMs: 0,
+      textureBytes: 0,
+      textureBytesWithMips: 0,
+      reliefTexelMm: {},
+      composeBump: this.detailMapOptions.composeBump,
+      bumpComposition: {},
+    };
     this.facadeDepthDiagnostics = createFacadeDepthDiagnostics();
     this.streetSurface = null;
     this.streetSurfaceDiagnostics = { pass: STREET_SURFACE_PASS, drawCalls: 0, triangles: 0, stats: null };
@@ -2044,10 +2551,11 @@ export class CityRenderer {
     this.legacyPedestrianBatchVisible = true;
     this.buildFocus = null;
 
+    this.shadowRig = readShadowRigOptions();
     this.sun = new THREE.DirectionalLight(0xffe0b0, 2.75);
     this.sun.position.set(-260, 380, 120);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(SUN_SHADOW_MAP_SIZE, SUN_SHADOW_MAP_SIZE);
+    this.sun.castShadow = this.shadowRig.cascades > 0;
+    this.sun.shadow.mapSize.set(this.shadowRig.mapSize, this.shadowRig.mapSize);
     this.scene.add(this.sun);
     // A DirectionalLight aims at `light.target`, and three only reads that
     // target's world matrix. Keeping it in the graph is what lets the fit move
@@ -2066,10 +2574,19 @@ export class CityRenderer {
     this.shadowFitSignature = null;
     this.shadowFitLogged = false;
     this.maxCasterHeight = SUN_SHADOW_DEFAULT_CASTER_HEIGHT;
+    /** @type {?CSMShadowNode} null when the rig runs one un-cascaded box. */
+    this.shadowCascade = null;
+    /** Lens signature the cascade split was last rebuilt for. */
+    this.shadowCascadeLens = null;
+    this.shadowCascadeLogged = false;
+    /** Per-cascade `{texelWorldSize, ringRadius}`, from the texel budget. */
+    this.shadowCascadeContexts = null;
+    /** Bumped by every caster-policy pass; late subtrees are tagged to match. */
+    this.shadowCascadeTagVersion = 0;
     this.shadowDiagnostics = {
       pass: SUN_SHADOW_PASS,
       fitted: false,
-      mapSize: SUN_SHADOW_MAP_SIZE,
+      mapSize: this.shadowRig.mapSize,
       shadowDistance: SUN_SHADOW_DISTANCE,
       texelsPerMetre: null,
       texelWorldSize: null,
@@ -2080,6 +2597,39 @@ export class CityRenderer {
       castShadow: false,
       sunAltitudeDeg: null,
       maxCasterHeight: SUN_SHADOW_DEFAULT_CASTER_HEIGHT,
+      // The cascade rig: what was asked for, what the planner priced, what the
+      // GPU actually allocated, and the per-cascade caster histogram. A capture
+      // that reads only `texelWorldSize` cannot tell a three-cascade rig from a
+      // one-cascade rig, and the whole point of this round is attributing that.
+      cascade: {
+        version: SUN_SHADOW_CASCADE_VERSION,
+        enabled: false,
+        requested: this.shadowRig.cascades,
+        active: 0,
+        mapSize: this.shadowRig.mapSize,
+        maxFar: this.shadowRig.maxFar,
+        lightMargin: null,
+        installed: false,
+        initialised: false,
+        reason: 'not installed yet',
+        lens: null,
+        budget: null,
+        /** One entry per cascade once the node has built its lights. */
+        cascades: [],
+        /** Shadow render passes per frame: the cost line. */
+        shadowPassesPerFrame: 0,
+        /** Depth-attachment bytes at 32-bit across all cascades. */
+        texelBytes: 0,
+        /** 'webgpu' | 'webgl2-fallback' | 'unknown', written after init. */
+        backend: null,
+        /**
+         * Whether a `light.shadow.shadowNode` cascade actually DEPOSITS on the
+         * active backend. Measured, not assumed - see
+         * `applyBackendShadowRigPolicy` for the measurement this records.
+         */
+        depositsOnThisBackend: null,
+        backendNote: 'backend not detected yet',
+      },
       densityRange: SHADOW_TEXEL_DENSITY_RANGE,
       refits: 0,
       warnings: [],
@@ -2094,6 +2644,12 @@ export class CityRenderer {
     };
     this._shadowForward = new THREE.Vector3();
     this._shadowEye = new THREE.Vector3();
+    // Cascades, if this build asked for them. Last, because it writes into
+    // `shadowDiagnostics.cascade` and reads `maxCasterHeight`. Constructing the
+    // node allocates nothing and touches no GPU resource until three first
+    // compiles a material that receives shadows, so it is safe here, before
+    // `renderer.init()`.
+    this.installShadowCascade();
 
     this.hemi = new THREE.HemisphereLight(0xe9f6ff, 0x9fb47a, 1.38);
     this.scene.add(this.hemi);
@@ -2137,6 +2693,10 @@ export class CityRenderer {
       /** The live traffic simulation, READ-ONLY. Presentation mirrors it. */
       get traffic() { return renderer.activeTraffic || null; },
       get hour() { return renderer.timeOfDay; },
+      /** Real solar altitude in degrees; negative after dark. A pass that
+       *  shades contact must not infer this from the clock: the key is
+       *  reflected and lifted at night and the clock cannot tell you that. */
+      get sunElevationDeg() { return renderer.solarAltitudeDeg ?? null; },
       get weather() { return renderer.envWeather; },
       get day() { return renderer.day; },
       /** Keep a geometry on the renderer's disposal ledger. */
@@ -2176,17 +2736,110 @@ export class CityRenderer {
       : this.renderer.backend?.isWebGLBackend === true
         ? 'webgl2-fallback'
         : 'unknown';
+    // Before ANY material is built, and therefore before the cascade count is
+    // unrolled into the node graph: pick a shadow rig this backend can
+    // actually deposit with.
+    this.applyBackendShadowRigPolicy();
     // Bake the shared detail maps at load rather than on the first frame, and
     // clamp their sampler anisotropy to what this backend really supports.
     const anisotropy = applyRendererCapabilities(this.renderer);
-    preloadDetailMaps(DETAIL_MAP_CLASSES, DETAIL_MAP_OPTIONS);
-    this.detailMapDiagnostics = { pass: DETAIL_MAP_PASS, anisotropy, ...detailMapCacheStats() };
+    // Per-class resolution is declared BEFORE the first bake, because the
+    // resolution is part of the bundle cache key: a policy set afterwards
+    // orphans bundles rather than replacing them. Declaring it here is also
+    // what stops `facade-articulation` (which passes no resolution) from
+    // baking a second set of the facade classes at `defaultResolution`.
+    const detail = this.detailMapOptions;
+    const policy = {};
+    for (const className of DETAIL_MAP_CLASSES) {
+      policy[className] = DETAIL_MAP_GROUND_CLASSES.includes(className)
+        ? detail.ground
+        : detail.facade;
+    }
+    setDetailResolutionPolicy(policy);
+    const bakeStartedAt = performance.now();
+    preloadDetailMaps(DETAIL_MAP_CLASSES);
+    const bakeMs = +(performance.now() - bakeStartedAt).toFixed(1);
+    const stats = detailMapCacheStats();
+    this.detailMapDiagnostics = {
+      pass: DETAIL_MAP_PASS,
+      anisotropy,
+      ...stats,
+      // The declared budget for this pass, restated where it is spent.
+      resolution: getDetailResolutionPolicy(),
+      requested: { ground: detail.ground, facade: detail.facade },
+      bakeMs,
+      // RGBA bytes on the wire. Mipmaps add ~1/3 on top of this.
+      textureBytes: stats.texels * 4,
+      textureBytesWithMips: Math.round(stats.texels * 4 * 4 / 3),
+      // Millimetres of real surface per relief texel, per class. This is the
+      // number the "3-6 screen pixels per texel" complaint was about.
+      reliefTexelMm: DETAIL_MAP_CLASSES.reduce((out, className) => {
+        out[className] = +reliefTexelMillimetres(className).x.toFixed(3);
+        return out;
+      }, {}),
+      composeBump: detail.composeBump,
+      bumpComposition: {},
+    };
     // One environment rig for the one renderer. PBR materials with no IBL have
     // no specular response at all, which is the single biggest reason the old
     // frames read as flat painted card.
     this.envRig = createEnvironmentRig(this.renderer, { scene: this.scene });
     await this.envRig.updateAsync({ hour: this.timeOfDay, weather: this.envWeather });
+    this.buildPostChain();
     return this.rendererBackend;
+  }
+
+  /**
+   * Stand up the canonical image pipeline. A failure here must not cost the
+   * round a frame: the chain is left null, the reason is recorded, and
+   * `renderFrame()` falls back to the bare render - which is exactly what the
+   * build did before this pass existed, minus the CSS grade.
+   */
+  buildPostChain() {
+    if (this.postChain) return this.postChain;
+    try {
+      this.postChain = createPostChain(this.renderer, this.scene, this.camera, this.postChainOptions);
+      this.postChainDiagnostics = { built: true, ...this.postChain.diagnostics() };
+    } catch (error) {
+      this.postChain = null;
+      this.postChainDiagnostics = {
+        version: POST_CHAIN_VERSION,
+        built: false,
+        enabled: false,
+        reason: String(error?.message || error),
+      };
+    }
+    return this.postChain;
+  }
+
+  /**
+   * QA control surface, reachable as
+   * `window.__CITYGEN__.getRenderer().setImagePipeline({ ... })`.
+   *
+   * Every stage is switchable so a capture round can attribute its cost:
+   *   { enabled }             whole chain on/off (off = bare render, no grade)
+   *   { ao }                  true/false, or a partial GTAO override
+   *   { antialias }           'smaa' | 'fxaa' | 'none'
+   *   { sceneSamples }        MSAA on the scene pass; null inherits the renderer
+   *   { grade }               true/false, or partial saturation/contrast/brightness
+   * Returns the chain diagnostics so the caller can record what it got.
+   */
+  setImagePipeline(patch = {}) {
+    const chain = this.postChain;
+    if (!chain) return this.postChainDiagnostics;
+    if ('enabled' in patch) chain.setEnabled(patch.enabled);
+    if ('ao' in patch) chain.setAmbientOcclusion(patch.ao);
+    if ('antialias' in patch) chain.setAntialias(patch.antialias);
+    if ('sceneSamples' in patch) chain.setSceneSamples(patch.sceneSamples);
+    if ('grade' in patch) chain.setGrade(patch.grade);
+    this.postChainDiagnostics = { built: true, ...chain.diagnostics() };
+    return this.postChainDiagnostics;
+  }
+
+  /** Live view of the image pipeline for the capture report. */
+  getImagePipeline() {
+    if (this.postChain) this.postChainDiagnostics = { built: true, ...this.postChain.diagnostics() };
+    return this.postChainDiagnostics;
   }
 
   /** Weather bucket driving the sky/IBL model: 'clear' | 'fog' | 'drizzle'. */
@@ -2235,6 +2888,19 @@ export class CityRenderer {
       this.envMaterialGroups = groups;
     }
     const table = {};
+    // Live, per-class evidence that the wet grade REACHED the materials.
+    //
+    // Round 4's manifest reported the wet response as
+    // `{wetness: 0, roughness: 0.93, dryRoughness: 0.93, visible: false}` on a
+    // card captured in drizzle, and five reviewers scored water 1/5 partly on
+    // that line. The line is not wrong, it is stale: it is a snapshot the
+    // sky-atmosphere pass takes at BUILD time, when the world is built at the
+    // default clear bucket, and nothing ever rewrites it. The wet grade itself
+    // runs here, at grade time, against the live weather. So this block
+    // publishes what was actually written onto the materials, counted, and the
+    // dry values it was written against - which is a claim a capture can
+    // falsify by reading the same materials back.
+    const wetTable = {};
     let graded = 0;
     for (const [envClass, materials] of this.envMaterialGroups) {
       const intensity = envMapIntensityFor(envClass, model);
@@ -2269,6 +2935,24 @@ export class CityRenderer {
         }
         graded += 1;
       }
+      const sample = materials.values().next().value || null;
+      wetTable[envClass] = {
+        materials: materials.size,
+        wetness: wet.wetness ?? 0,
+        roughnessScale: wet.roughnessScale ?? 1,
+        colorScale: wet.colorScale ?? 1,
+        envMapIntensity: intensity,
+        // Read back off a real material rather than restated from the grade,
+        // so a class whose materials silently lack `roughness` shows up as
+        // null instead of as a number nothing wrote.
+        appliedRoughness: sample && 'roughness' in sample
+          ? Math.round(sample.roughness * 10000) / 10000
+          : null,
+        dryRoughness: Number.isFinite(sample?.userData?.dryRoughness)
+          ? Math.round(sample.userData.dryRoughness * 10000) / 10000
+          : null,
+        envMapBound: Boolean(sample?.envMap),
+      };
     }
     this.environmentDiagnostics = {
       pass: model.version || null,
@@ -2276,7 +2960,14 @@ export class CityRenderer {
       gradedMaterials: graded,
       envMapIntensity: table,
       lightRig: model.lightRig ? { ...model.lightRig.scales } : null,
+      /** Live per-class wet response, read back off the graded materials. */
+      wet: wetTable,
+      /** The one number the drizzle card is actually about. */
+      wetness: Number.isFinite(model.wetness) ? model.wetness : null,
       textureReady: Boolean(texture),
+      probe: (() => {
+        try { return this.envRig?.stats ? this.envRig.stats() : null; } catch { return null; }
+      })(),
     };
     return graded;
   }
@@ -2437,6 +3128,13 @@ export class CityRenderer {
 
   dispose() {
     window.removeEventListener('resize', this.onResize);
+    if (this.postChain) {
+      this.postChain.dispose();
+      this.postChain = null;
+      this.postChainDiagnostics = {
+        version: POST_CHAIN_VERSION, built: false, enabled: false, reason: 'disposed',
+      };
+    }
     this.controls.dispose();
     this.passRuntime.dispose();
     this.passContext = null;
@@ -2448,6 +3146,14 @@ export class CityRenderer {
     this.disposeParkedCarPartitionRuntime();
     for (const geometry of new Set(this.geometryCache)) geometry.dispose();
     this.disposeGroundMaterialTextures();
+    if (this.rain) {
+      this.scene.remove(this.rain.group);
+      this.rain.material.dispose();
+      this.rain.geometry.dispose();
+      this.rain.mesh.dispose();
+      this.rain = null;
+      this.rainDiagnostics = { pass: RAIN_PASS, built: false, reason: 'disposed' };
+    }
     this.scene.environment = null;
     this.envRig?.dispose();
     this.envRig = null;
@@ -2549,6 +3255,8 @@ export class CityRenderer {
     this.localLightPool = [];
     this.localLightUpdateClock = 0;
     this.localLightsNight = false;
+    this.localDecalFade = null;
+    this.localLightDiagnostics = createNightPracticalDiagnostics();
     this.disposeWorldPartitionRuntime();
     this.disposeParkedCarPartitionRuntime();
     this.streetLampRecords = [];
@@ -2681,25 +3389,84 @@ export class CityRenderer {
   }
 
   async prewarmLightingPipelines() {
-    if (typeof this.renderer.compileAsync !== 'function') return;
+    const startedAt = performance.now();
+    const diagnostics = {
+      ran: false,
+      skipped: null,
+      renderWarmup: false,
+      warmSize: null,
+      restoredSize: null,
+      restoredAspect: null,
+      ms: 0,
+    };
+    this.prewarmDiagnostics = diagnostics;
+    if (typeof this.renderer.compileAsync !== 'function') {
+      diagnostics.skipped = 'no-compileAsync';
+      return diagnostics;
+    }
+    // A clock-pinned capture holds one hour for the whole run, so it never
+    // experiences the day/night pipeline transition this warm-up exists to
+    // smooth. Let such a run opt out explicitly - and only explicitly: the
+    // probe is read once, here, and the default (absent flag, no query
+    // parameter) keeps the production behaviour.
+    const search = typeof window !== 'undefined' ? (window.location?.search || '') : '';
+    const skipRequested = (typeof window !== 'undefined' && window.__QA_SKIP_PREWARM__ === true)
+      || new URLSearchParams(search).get('qaPrewarm') === 'off';
+    if (skipRequested) {
+      diagnostics.skipped = 'requested';
+      diagnostics.ms = +(performance.now() - startedAt).toFixed(1);
+      return diagnostics;
+    }
     const renderWarmup = !this.lightingPipelinesRendered
       && typeof this.renderer.renderAsync === 'function';
+    diagnostics.renderWarmup = renderWarmup;
+    // The compiled pipelines are identical at any resolution; the fragment work
+    // is not. Warm at 64x64 and put the drawing buffer back afterwards. The
+    // restore is `updateStyle = false`, so the canvas CSS box never changes and
+    // no resize observer or re-render is triggered by it; the camera aspect is
+    // saved and re-applied because it belongs to the presented size, not to the
+    // warm-up one.
+    const canResize = typeof this.renderer.setSize === 'function'
+      && typeof this.renderer.getSize === 'function';
+    const previousSize = canResize ? this.renderer.getSize(new THREE.Vector2()) : null;
+    const previousAspect = this.camera?.aspect ?? null;
     const restoreHour = this.timeOfDay;
     this.appliedTimeOfDay = null;
     this.appliedNightState = null;
     this.appliedPracticalKey = null;
-    this.setTimeOfDay(14);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
-    this.setTimeOfDay(22);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
-    this.setTimeOfDay(restoreHour);
-    await this.renderer.compileAsync(this.scene, this.camera);
-    if (renderWarmup) {
-      await this.renderer.renderAsync(this.scene, this.camera);
-      this.lightingPipelinesRendered = true;
+    try {
+      if (canResize && previousSize && previousSize.x > 64 && previousSize.y > 64) {
+        this.renderer.setSize(64, 64, false);
+        diagnostics.warmSize = [64, 64];
+      } else {
+        diagnostics.warmSize = previousSize ? [previousSize.x, previousSize.y] : null;
+      }
+      this.setTimeOfDay(14);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+      this.setTimeOfDay(22);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) await this.renderer.renderAsync(this.scene, this.camera);
+      this.setTimeOfDay(restoreHour);
+      await this.renderer.compileAsync(this.scene, this.camera);
+      if (renderWarmup) {
+        await this.renderer.renderAsync(this.scene, this.camera);
+        this.lightingPipelinesRendered = true;
+      }
+      diagnostics.ran = true;
+    } finally {
+      if (canResize && previousSize && diagnostics.warmSize && diagnostics.warmSize[0] === 64) {
+        this.renderer.setSize(previousSize.x, previousSize.y, false);
+        diagnostics.restoredSize = [previousSize.x, previousSize.y];
+      }
+      if (previousAspect != null && this.camera) {
+        this.camera.aspect = previousAspect;
+        this.camera.updateProjectionMatrix();
+        diagnostics.restoredAspect = previousAspect;
+      }
+      diagnostics.ms = +(performance.now() - startedAt).toFixed(1);
     }
+    return diagnostics;
   }
 
   installMetricTileRoot(root, bounds) {
@@ -2760,6 +3527,8 @@ export class CityRenderer {
       this.localLightPool = [];
       this.localLightUpdateClock = 0;
       this.localLightsNight = false;
+      this.localDecalFade = null;
+      this.localLightDiagnostics = createNightPracticalDiagnostics();
       this.streetLampRecords = [];
       this.streetLampDiagnostics = {
         source: null,
@@ -2942,24 +3711,112 @@ export class CityRenderer {
   }
 
   /**
-   * Shadow-caster admission, run once per city build.
+   * Shadow-caster admission, run once per city build - now once PER CASCADE.
    *
-   * The measured caster set was 297 meshes, of which 143 had a smallest
-   * bounding-box dimension under 0.35 m and 137 of those were shopfront
-   * awnings - 0.14 m plates, 12 m long. At the fitted texel size an awning is
-   * well under one shadow texel, and the `normalBias` the map needs to stay
-   * free of slope acne is itself larger than the plate is thick, so the depth
-   * comparison flips on sub-texel detail. That is the dark X-shaped banding
-   * lying across real roadway in the night card. No bias serves both; at this
-   * texel size exclusion is the only correct answer.
+   * The round-4 single-box rig measured 0.14587 m texels, which prices the
+   * policy's 1.5-texel floor at 0.2188 m, and 165 of 340 declared casters fell
+   * under it: the histogram's own example is a 0.118 m transit support at
+   * 0.806 texels. That exclusion was right for that rig. A 0.14 m shopfront
+   * awning under a 0.2674 m normalBias produces banding, not a shadow, and no
+   * bias setting serves both the plate and the wall behind it.
    *
-   * Three deliberate constraints on how the policy is applied here:
+   * It stops being right the moment the rig has more than one texel size. The
+   * near cascade resolves 3.80 cm; the same support is 3.1 texels there and
+   * casts correctly, while in the 21.65 cm far cascade it is 0.54 texels and
+   * must still be refused. So the policy is re-run once per cascade against
+   * that cascade's own texel size, and the answer is recorded as a layer bit
+   * rather than as a single scene-wide `castShadow`. See
+   * `tagShadowCascadeLayers` for the encoding and for the three constraints
+   * carried over from the single-box pass.
    *
-   *  1. **It can only take shadows away, never grant them.** Only meshes that
-   *     already have `castShadow === true` are considered. Several modules
-   *     switch casting off on purpose - `street-surface-v2` does it for the
-   *     carriageway, because a flat road that shadows itself is pure acne -
-   *     and a role-based promotion would silently undo that decision.
+   * `shadowDiagnostics.casterPolicy` deliberately keeps reporting the
+   * COARSEST cascade's histogram, so the round-4 number it is compared
+   * against still means the same thing; the per-cascade histograms are
+   * reported next to it under `shadowDiagnostics.cascade.casterPolicy`.
+   */
+  applyShadowCasterPolicyPass(root) {
+    const contexts = this.cascadeCasterContexts();
+    this.shadowCascadeContexts = contexts;
+    let audits;
+    let tiered;
+    try {
+      const policies = contexts.map((context) => createShadowCasterPolicy(context));
+      audits = contexts.map(() => createShadowCasterAudit());
+      tiered = this.tagShadowCascadeLayers(root, { policies, audits });
+    } catch (error) {
+      console.error(`[${SHADOW_CASTER_VERSION}] caster policy failed; the scene keeps `
+        + 'the per-builder castShadow flags', error);
+      return null;
+    }
+    this.shadowCascadeTagVersion += 1;
+    // The headline audit stays the COARSEST cascade's, so `casterPolicy`,
+    // `casters` and `castersExcluded` keep meaning what they meant in round 4
+    // - the set a single wide box would admit - and the per-cascade histogram
+    // is reported alongside instead of quietly redefining them.
+    const audit = audits[audits.length - 1];
+    this.shadowCasterAudit = audit;
+    this.shadowDiagnostics.casterPolicy = audit.toJSON();
+    this.shadowDiagnostics.casters = audit.casting;
+    this.shadowDiagnostics.castersExcluded = audit.excluded;
+    const cascade = this.shadowDiagnostics.cascade;
+    cascade.casterPolicy = audits.map((entry, index) => ({
+      cascade: index,
+      texelWorldSize: contexts[index].texelWorldSize,
+      minCasterThickness: Number((MIN_THICKNESS_TEXELS * contexts[index].texelWorldSize).toFixed(4)),
+      ...entry.toJSON(),
+    }));
+    cascade.casterTiers = tiered.tiers;
+    cascade.castersConsidered = tiered.considered;
+    cascade.castersAdmittedAnywhere = tiered.admitted;
+    cascade.castersExcludedEverywhere = tiered.excluded;
+    cascade.shadowDrawsPerFrame = tiered.tiers.reduce((sum, count) => sum + count, 0);
+    if (!this.shadowCasterLogged) {
+      this.shadowCasterLogged = true;
+      // Once, at startup. Deterministic: the histogram is ordered by the
+      // module's declared code order, not by traversal order.
+      console.info(summariseShadowCasterAudit(audit, SHADOW_CASTER_VERSION));
+      if (contexts.length > 1) {
+        console.info(`[${SHADOW_CASTER_VERSION}] per-cascade admission of `
+          + `${tiered.considered} declared casters: `
+          + contexts.map((context, index) => `#${index} floor `
+            + `${(MIN_THICKNESS_TEXELS * context.texelWorldSize * 100).toFixed(1)} cm -> `
+            + `${tiered.tiers[index]} meshes`).join(', ')
+          + `; ${tiered.excluded} admitted by no cascade, `
+          + `${tiered.tiers.reduce((a, b) => a + b, 0)} shadow draws per frame across `
+          + `${contexts.length} passes`);
+      }
+    }
+    return audit;
+  }
+
+  /**
+   * Decide, per cascade, which meshes in a subtree may cast, and record the
+   * answer as layer bits.
+   *
+   * Why layers. Three renders a cascade by drawing the scene with that
+   * cascade's shadow camera, and the only per-camera visibility filter it
+   * offers is `Object3D.layers`. Bit `SUN_SHADOW_CASCADE_LAYER + i` therefore
+   * means "this mesh is a caster for cascade i". Bit 0 is never touched, so
+   * nothing changes for the main camera, for a raycast, or for any other pass.
+   *
+   * The encoding is deliberately fail-safe in the direction that matters. A
+   * cascade camera tests `{0, 1 + i}`, so a caster that never reached this
+   * method - a subtree built after the world, for instance - still carries bit
+   * 0 alone and is drawn into every cascade, which is the round-4 behaviour.
+   * The failure mode of the opposite encoding is a mesh that silently casts
+   * nothing anywhere, which is exactly the class of bug this round exists to
+   * fix.
+   *
+   * Three deliberate constraints, carried over from the single-box pass:
+   *
+   *  1. **It can only take shadows away, never grant them.** The policy is
+   *     applied to the flag the BUILDER set, recorded once in
+   *     `userData.shadowCasterSeed`. Several modules switch casting off on
+   *     purpose - `street-surface-v2` does it for the carriageway, because a
+   *     flat road that shadows itself is pure acne - and a role-based
+   *     promotion would silently undo that. Recording the seed is also what
+   *     makes the pass idempotent, so a lens change can re-tier the scene
+   *     instead of ratcheting casters off one pass at a time.
    *  2. **No `groundHeightAt`, so the ground-flush gate never runs.** That
    *     gate looks for a thin plate resting on the ground by aspect ratio, and
    *     this renderer merges whole classes of building into single city-wide
@@ -2967,55 +3824,62 @@ export class CityRenderer {
    *     sitting on the terrain. It would have excluded the entire streetwall.
    *     Nothing is lost: a real ground decal is ~1 cm thick and the thickness
    *     gate already refuses it.
-   *  3. **No `ringCentre`, so the ring gate never runs.** The fitted box
-   *     follows the camera; a build-time ring test would permanently silence
-   *     every caster that happened to be far from the build focus.
+   *  3. **No `ringCentre`, so the ring gate never runs.** The boxes follow the
+   *     camera; a build-time ring test would permanently silence every caster
+   *     that happened to be far from the build focus.
    *
-   * Not per-frame: this is a `Box3.setFromObject` per mesh. The texel size is
-   * invariant to where the camera looks (see the `SUN_SHADOW_PASS` note), so
-   * one pass describes every frame this build will draw.
+   * Not per-frame: this is a `Box3.setFromObject` per mesh. Each cascade's
+   * texel size depends only on the lens and the split, so one pass describes
+   * every frame this build will draw until the lens changes.
    *
-   * Writes exactly one property, `castShadow`. `receiveShadow` is untouched:
-   * an awning that cannot cast should still be shaded by the wall above it.
+   * Writes `castShadow` and the cascade layer bits. `receiveShadow` is
+   * untouched: an awning that cannot cast should still be shaded by the wall
+   * above it.
+   *
+   * @param {object} root Subtree to tag.
+   * @param {object} [options]
+   * @param {Array<object>} [options.policies] Bound policies, one per cascade.
+   * @param {Array<object>} [options.audits] Audits to record into, one per cascade.
+   * @returns {{considered:number, admitted:number, excluded:number, tiers:number[]}}
    */
-  applyShadowCasterPolicyPass(root) {
-    const texelWorldSize = Number.isFinite(this.shadowFit?.texelWorldSize)
-      ? this.shadowFit.texelWorldSize
-      : MEASURED_TEXEL_WORLD_SIZE;
-    const ringRadius = Number.isFinite(this.shadowFit?.halfExtent) && this.shadowFit.halfExtent > 0
-      ? this.shadowFit.halfExtent
-      : MEASURED_RING_RADIUS;
-    let audit;
-    try {
-      const policy = createShadowCasterPolicy({ texelWorldSize, ringRadius });
-      audit = createShadowCasterAudit();
-      root.updateMatrixWorld(true);
-      root.traverse((object) => {
-        if (!object.isMesh && !object.isInstancedMesh && !object.isBatchedMesh) return;
-        if (object.castShadow !== true) return;
-        const descriptor = measureShadowCaster(object);
-        const role = this.shadowRoleForMesh(object);
-        if (role) descriptor.role = role;
-        const result = policy.decide(descriptor);
-        object.castShadow = result.cast;
-        audit.record(result, descriptor.name || object.userData?.kind || '(unnamed)');
-      });
-    } catch (error) {
-      console.error(`[${SHADOW_CASTER_VERSION}] caster policy failed; the scene keeps `
-        + 'the per-builder castShadow flags', error);
-      return null;
-    }
-    this.shadowCasterAudit = audit;
-    this.shadowDiagnostics.casterPolicy = audit.toJSON();
-    this.shadowDiagnostics.casters = audit.casting;
-    this.shadowDiagnostics.castersExcluded = audit.excluded;
-    if (!this.shadowCasterLogged) {
-      this.shadowCasterLogged = true;
-      // Once, at startup. Deterministic: the histogram is ordered by the
-      // module's declared code order, not by traversal order.
-      console.info(summariseShadowCasterAudit(audit, SHADOW_CASTER_VERSION));
-    }
-    return audit;
+  tagShadowCascadeLayers(root, options = {}) {
+    const contexts = this.shadowCascadeContexts || this.cascadeCasterContexts();
+    const policies = options.policies
+      || contexts.map((context) => createShadowCasterPolicy(context));
+    const audits = options.audits || null;
+    const tiers = new Array(policies.length).fill(0);
+    let considered = 0;
+    let admitted = 0;
+    let excluded = 0;
+    root.updateMatrixWorld(true);
+    root.traverse((object) => {
+      if (!object.isMesh && !object.isInstancedMesh && !object.isBatchedMesh) return;
+      const data = object.userData || (object.userData = {});
+      // The builder's intent, recorded once. Re-reading `castShadow` on a
+      // second pass would read this pass's own previous answer.
+      if (typeof data.shadowCasterSeed !== 'boolean') data.shadowCasterSeed = object.castShadow === true;
+      if (data.shadowCasterSeed !== true) return;
+      considered += 1;
+      const descriptor = measureShadowCaster(object);
+      const role = this.shadowRoleForMesh(object);
+      if (role) descriptor.role = role;
+      let any = false;
+      for (let i = 0; i < policies.length; i += 1) {
+        const result = policies[i].decide(descriptor);
+        if (audits) audits[i].record(result, descriptor.name || data.kind || '(unnamed)');
+        const bit = SUN_SHADOW_CASCADE_LAYER + i;
+        if (result.cast) {
+          object.layers.enable(bit);
+          tiers[i] += 1;
+          any = true;
+        } else {
+          object.layers.disable(bit);
+        }
+      }
+      object.castShadow = any;
+      if (any) admitted += 1; else excluded += 1;
+    });
+    return { considered, admitted, excluded, tiers };
   }
 
   buildTerrainContours(root, city) {
@@ -3723,11 +4587,38 @@ export class CityRenderer {
    */
   applyFacadeDetail(material, className, options = {}) {
     return applyDetailMaps(material, className, {
-      ...DETAIL_MAP_OPTIONS,
       repeat: detailRepeatForUvTile(className, BUILDING_UV_METRES_X, BUILDING_UV_METRES_Y),
       useMetalnessMap: false,
       ...options,
     });
+  }
+
+  /**
+   * Make the street's albedo-derived bump reachable again.
+   *
+   * street-surface-v2 binds the 1254 px ground albedo as `bumpMap` with an
+   * authored `bumpScale` (0.032 asphalt / 0.018 concrete). three's stock normal
+   * chain is exclusive - `normalMap` wins and `bumpMap` is never read - so from
+   * the moment `applyDetailMaps` fills the normal slot above, that binding was
+   * dead: bound, authored, diagnosed, and absent from every shader. The
+   * carriageway albedo is 4 m per repeat over 1254 px = 3.19 mm per height
+   * texel and the footway 2.6 m / 1254 = 2.07 mm, so what was being discarded
+   * is real relief, on the two surfaces the camera stands on.
+   *
+   * `composeBumpRelief` perturbs the detail normal by that height field instead
+   * of choosing between them. The bindings are left in place, so the ground
+   * material contract (`map === bumpMap`, exact `bumpScale`) still reads true.
+   * `?detailBump=off` restores the stock exclusive chain for attribution.
+   */
+  composeStreetRelief(slot, material) {
+    const diagnostics = this.detailMapDiagnostics;
+    if (!this.detailMapOptions.composeBump) {
+      if (diagnostics) diagnostics.bumpComposition[slot] = 'disabled';
+      return false;
+    }
+    const result = composeBumpRelief(material);
+    if (diagnostics) diagnostics.bumpComposition[slot] = result.applied ? 'composed' : result.reason;
+    return result.applied;
   }
 
   /** Shared material for one facade-relief (style, role) batch. */
@@ -4606,7 +5497,6 @@ export class CityRenderer {
     if (street.materials.carriageway) {
       const material = street.materials.carriageway;
       applyDetailMaps(material, 'asphalt', {
-        ...DETAIL_MAP_OPTIONS,
         repeat: detailRepeatForUvTile('asphalt', uvMetres.carriageway, uvMetres.carriageway),
         useMetalnessMap: false,
         normalScale: 0.9,
@@ -4615,11 +5505,11 @@ export class CityRenderer {
       });
       material.metalness = 0;
       material.userData.envClass = classifyMaterialClass({ kind: 'asphalt' });
+      this.composeStreetRelief('carriageway', material);
     }
     if (street.materials.concrete) {
       const material = street.materials.concrete;
       applyDetailMaps(material, 'sidewalk-concrete', {
-        ...DETAIL_MAP_OPTIONS,
         repeat: detailRepeatForUvTile('sidewalk-concrete', uvMetres.concrete, uvMetres.concrete),
         useMetalnessMap: false,
         normalScale: 0.85,
@@ -4628,6 +5518,7 @@ export class CityRenderer {
       });
       material.metalness = 0;
       material.userData.envClass = classifyMaterialClass({ kind: 'sidewalk' });
+      this.composeStreetRelief('footway', material);
     }
     // street-surface-v2 declares its own environment class for every material it
     // builds (STREET_SURFACE_V2_ENV_CLASSES: asphalt / sidewalk /
@@ -4824,9 +5715,16 @@ export class CityRenderer {
         y: y + 4.8,
         z,
         color: 0xffc46a,
+        // `intensity` is the pre-plan fallback only. The shipped value comes
+        // from `practicalPointLightIntensity`, solved against the display peak
+        // the painted pool this light replaces is already specified in. See
+        // `planPracticalLights`.
         intensity: 0.72,
         distance: 28,
         decay: 2.1,
+        role: 'street-lamp',
+        /** Metres from the head to the centre of its own pool: the mount height. */
+        referenceDistance: 4.8,
       });
     }
     group.name = 'street-lamps';
@@ -4834,18 +5732,36 @@ export class CityRenderer {
   }
 
   installLocalLightPool(root) {
-    // WebGPU currently evaluates every PointLight against the scene. Keep all
-    // authored emissive fixtures, but reserve real illumination for a small
-    // camera-local pool so city density does not multiply frame cost.
-    const poolSize = Math.min(3, this.localLightCandidates.length);
+    // See NIGHT_LIGHT_POOL_SIZE above for the cost argument. The pool is
+    // resident: every light stays `visible` and in the scene for the whole
+    // session, and dusk only moves intensities. Dropping a light out of the
+    // scene changes three's light hash and rebuilds every lit pipeline mid
+    // transition, which is what the <=4 ms transition budget exists to stop.
+    const options = this.nightLightOptions;
+    const poolSize = Math.min(options.lights, this.localLightCandidates.length);
+    const shadowCount = Math.min(options.shadows, poolSize);
     const group = new THREE.Group();
     group.name = 'local-light-pool';
     for (let i = 0; i < poolSize; i += 1) {
       const light = new THREE.PointLight(0xffffff, 0, 28, 2);
       light.name = `local-night-light-${i + 1}`;
-      // Keep the three-light layout resident across day/night transitions so
-      // WebGPU does not rebuild the lighting pipeline when dusk begins.
       light.visible = true;
+      if (i < shadowCount) {
+        // `castShadow` is set ONCE, here, and never toggled: three disposes and
+        // rebuilds the shadow node inside `AnalyticLightNode.setup` when it
+        // flips, so a dusk toggle would be a pipeline rebuild wearing a
+        // different hat. Day is expressed as `shadow.intensity = 0`.
+        light.castShadow = true;
+        light.shadow.mapSize.set(options.shadowMapSize, options.shadowMapSize);
+        light.shadow.camera.near = 0.4;
+        light.shadow.bias = -0.004;
+        light.shadow.normalBias = 0.03;
+        light.shadow.intensity = 0;
+        // The whole cost containment: six cube faces are re-rendered only on a
+        // frame where this light actually moved, not every frame.
+        light.shadow.autoUpdate = false;
+        light.shadow.needsUpdate = false;
+      }
       group.add(light);
       this.localLightPool.push(light);
     }
@@ -4857,6 +5773,310 @@ export class CityRenderer {
     if (this.streetLampDiagnostics) {
       this.streetLampDiagnostics.pointLightPoolSize = this.localLightPool.length;
     }
+    const faces = shadowCount * 6;
+    const texelBytes = shadowCount * 6 * options.shadowMapSize * options.shadowMapSize * 4;
+    this.localLightDiagnostics = {
+      pass: NIGHT_PRACTICAL_PASS,
+      candidates: this.localLightCandidates.length,
+      // The declared budget, restated where it is spent (AGENTS.md).
+      budget: {
+        pointLights: poolSize,
+        requestedPointLights: options.lights,
+        shadowPointLights: shadowCount,
+        shadowMapSize: options.shadowMapSize,
+        // three binds this to `light.distance`; recorded, not chosen.
+        shadowReach: 'light.distance',
+        // Six depth renders per shadowed light, but only on a refresh frame.
+        cubeFacesPerRefresh: faces,
+        shadowDepthBytes: texelBytes,
+        // What every lit fragment pays on EVERY card, night or not.
+        lightLoopPerFragment: poolSize,
+        previousLightLoopPerFragment: 6,
+      },
+      active: 0,
+      shadowRefreshes: 0,
+      decalFade: { state: 'pending', reason: null, meshes: 0, vertices: 0, faded: 0 },
+    };
+  }
+
+  /**
+   * Build the rain volume. Once, lazily, on the first wet bucket.
+   *
+   * Deterministic: drop placement comes from `mulberry32` on a fixed seed, so a
+   * pinned capture reproduces the same field. No `Math.random()`.
+   *
+   * @returns {?object} the rain state, or null when it could not be built.
+   */
+  ensureRain() {
+    if (this.rain) return this.rain;
+    if (this.rainFailed) return null;
+    try {
+      // One streak = two quads crossed at 90 degrees about the fall axis, so
+      // the drop has a silhouette from every azimuth. Built as one geometry and
+      // instanced, which is what keeps this to a single draw call.
+      const half = RAIN_STREAK.length * 0.5;
+      const w = RAIN_STREAK.width * 0.5;
+      const positions = [];
+      const indices = [];
+      for (let plane = 0; plane < 2; plane += 1) {
+        const angle = plane * Math.PI * 0.5;
+        const cx = Math.cos(angle) * w;
+        const cz = Math.sin(angle) * w;
+        const base = plane * 4;
+        positions.push(-cx, -half, -cz, cx, -half, cz, cx, half, cz, -cx, half, -cz);
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      geometry.name = `${RAIN_PASS}:streak`;
+      // Deliberately NOT on `geometryCache`. That ledger is disposed and
+      // cleared on every world rebuild, and this volume is camera-anchored
+      // atmosphere rather than world content: it outlives a `generate()` on
+      // purpose, so it must not be freed by one. It is disposed in `dispose()`.
+
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        // Display-referred: a streak is a glint of the sky, and quoting it in
+        // scene units would make it swing with the exposure curve.
+        toneMapped: false,
+        side: THREE.DoubleSide,
+        fog: true,
+      });
+      const mesh = new THREE.InstancedMesh(geometry, material, RAIN_BUDGET.streaks);
+      mesh.name = 'rain-streaks';
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 6;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.matrixAutoUpdate = true;
+      mesh.visible = false;
+
+      const rnd = mulberry32(hashString(`${RAIN_PASS}:field`));
+      const dummy = new THREE.Object3D();
+      for (let i = 0; i < RAIN_BUDGET.streaks; i += 1) {
+        // Uniform in the disc, uniform in the wrap cell. Both matter: a
+        // non-uniform Y distribution would make the wrap visible as a pulse.
+        const radius = RAIN_RADIUS * Math.sqrt(rnd());
+        const theta = rnd() * Math.PI * 2;
+        dummy.position.set(
+          Math.cos(theta) * radius,
+          rnd() * RAIN_CELL_HEIGHT,
+          Math.sin(theta) * radius,
+        );
+        dummy.rotation.set(RAIN_TILT, rnd() * Math.PI * 2, 0);
+        // A little length variation, so the field does not read as a texture.
+        dummy.scale.set(1, 0.7 + rnd() * 0.8, 1);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+
+      const group = new THREE.Group();
+      group.name = 'rain';
+      group.add(mesh);
+      this.scene.add(group);
+      this.rain = {
+        pass: RAIN_PASS,
+        group,
+        mesh,
+        material,
+        geometry,
+        phase: 0,
+        wetness: 0,
+        opacity: 0,
+      };
+      this.rainDiagnostics = {
+        pass: RAIN_PASS,
+        built: true,
+        streaks: RAIN_BUDGET.streaks,
+        budget: RAIN_BUDGET,
+        triangles: RAIN_BUDGET.triangles,
+        drawCalls: RAIN_BUDGET.drawCalls,
+        radius: RAIN_RADIUS,
+        cellHeight: RAIN_CELL_HEIGHT,
+        fallSpeed: RAIN_FALL_SPEED,
+        peakDisplay: RAIN_PEAK_DISPLAY,
+        wetnessThreshold: RAIN_WETNESS_THRESHOLD,
+        wetness: 0,
+        opacity: 0,
+        visible: false,
+      };
+      return this.rain;
+    } catch (error) {
+      this.rainFailed = true;
+      this.rainDiagnostics = {
+        pass: RAIN_PASS, built: false, reason: String(error?.message || error),
+      };
+      return null;
+    }
+  }
+
+  /**
+   * Switch the rain on or off for a sky state, and set its strength.
+   *
+   * Strength is the model's own `wetness`, so it is one number for the whole
+   * weather response: the same term drives the roughness drop in
+   * `applyEnvironmentGrading`, the puddle sheen in the sky-atmosphere pass, and
+   * this. `fog` (wetness 0.3) stays below `RAIN_WETNESS_THRESHOLD` on purpose.
+   *
+   * @param {?object} model The sky model in force, or null.
+   */
+  setRainFromModel(model) {
+    const wetness = Number.isFinite(model?.wetness) ? clamp(model.wetness, 0, 1) : 0;
+    const wanted = wetness >= RAIN_WETNESS_THRESHOLD;
+    if (!wanted && !this.rain) return;
+    const rain = this.ensureRain();
+    if (!rain) return;
+    // Ramp from the threshold rather than from zero, so `fog` cannot leak a
+    // faint field of streaks into a card that is not raining.
+    const strength = wanted
+      ? clamp((wetness - RAIN_WETNESS_THRESHOLD) / (1 - RAIN_WETNESS_THRESHOLD), 0, 1)
+      : 0;
+    const opacity = (RAIN_PEAK_DISPLAY / 255) * strength;
+    rain.wetness = wetness;
+    rain.opacity = opacity;
+    rain.material.opacity = opacity;
+    rain.mesh.visible = opacity > 0.01;
+    rain.group.visible = rain.mesh.visible;
+    if (this.rainDiagnostics) {
+      this.rainDiagnostics.wetness = Math.round(wetness * 10000) / 10000;
+      this.rainDiagnostics.opacity = Math.round(opacity * 10000) / 10000;
+      this.rainDiagnostics.visible = rain.mesh.visible;
+      this.rainDiagnostics.triangles = rain.mesh.visible ? RAIN_BUDGET.triangles : 0;
+      this.rainDiagnostics.drawCalls = rain.mesh.visible ? RAIN_BUDGET.drawCalls : 0;
+    }
+  }
+
+  /**
+   * Fall, and follow the lens.
+   *
+   * Two float writes and one vector copy, because the drop field is uniform in
+   * the wrap cell: translating the whole group by `-(t * speed) mod cell` is
+   * indistinguishable from moving every drop, and costs nothing per drop.
+   *
+   * @param {number} delta Seconds since the last tick.
+   */
+  updateRain(delta) {
+    const rain = this.rain;
+    if (!rain || !rain.mesh.visible) return;
+    const step = Number.isFinite(delta) ? Math.max(0, Math.min(delta, 0.25)) : 0;
+    rain.phase = (rain.phase + step * RAIN_FALL_SPEED) % RAIN_CELL_HEIGHT;
+    const camera = this.camera.position;
+    // The column is hung so its top is above the lens and its bottom is at the
+    // street: a drop drawn behind the viewer's feet is a drop paid for twice.
+    rain.group.position.set(
+      camera.x + rain.phase * Math.sin(RAIN_TILT),
+      camera.y + RAIN_CELL_HEIGHT * 0.35 - rain.phase,
+      camera.z,
+    );
+  }
+
+  /**
+   * Solve the resident practical pool's intensities against the display peaks
+   * the painted pools are already specified in.
+   *
+   * The defect this replaces. Wave B put real point lights on the street and
+   * gave them hand-authored intensities, while the decals they fade out are
+   * quoted in `nightPracticalProfile` as DISPLAY steps. The two scales never
+   * met. Measured on the canonical 21:30 clear rig as it shipped: an up-facing
+   * footway of albedo 0.42 sat at display luma 100.7 from the punctual fill
+   * alone, and the street lamp 4.8 m over its head added 0.0267 of irradiance
+   * - 3.5 display steps. The lamp was invisible against the ambient, which is
+   * the gate's "night carried by uniform response rather than local lighting"
+   * condition wearing an ambient term instead of an emissive one.
+   *
+   * Two things fix it together and neither is sufficient alone:
+   * `NIGHT_PRACTICAL_FILL_SHARE` withdraws the fill that was standing in for
+   * these fixtures, and this solves each fixture for the peak its own decal
+   * claims. Both are functions of the sky model, so both move with weather:
+   * `pool.peakDisplay` is 82 clear and 111 in drizzle, because a wet road
+   * returns the light instead of absorbing it.
+   *
+   * @param {object} model The sky model in force.
+   * @param {object} practicals `nightPracticalProfile(model)`.
+   * @returns {?object} the plan, or null when there is nothing to solve.
+   */
+  planPracticalLights(model, practicals) {
+    if (!model || !practicals) {
+      this.practicalPlan = null;
+      return null;
+    }
+    const exposure = recommendedExposure(model).exposure;
+    // What an up-facing footway already receives, in the renderer's own units,
+    // read off the lights this same call just set rather than re-derived: the
+    // hemisphere light delivers its full intensity to an up normal, ambient is
+    // uniform, and the environment reaches a classed material at its own
+    // class intensity rather than at `scene.environmentIntensity`.
+    const background = Math.max(0, this.hemi.intensity)
+      + Math.max(0, this.ambient.intensity)
+      + Math.max(0, model.skyIrradianceLuminance || 0) * envMapIntensityFor('sidewalk', model);
+    const roles = {};
+    for (const [role, spec] of Object.entries(PRACTICAL_ROLES)) {
+      const ramp = clamp(spec.ramp(practicals) ?? 0, 0, 1);
+      const peakDisplay = Math.max(0, spec.peak(practicals) ?? 0) * ramp;
+      roles[role] = {
+        ramp: Math.round(ramp * 10000) / 10000,
+        peakDisplay: Math.round(peakDisplay * 10) / 10,
+      };
+    }
+    const plan = {
+      pass: NIGHT_PRACTICAL_PASS,
+      hour: model.hour,
+      weather: model.weather,
+      exposure,
+      albedo: PRACTICAL_REFERENCE_ALBEDO,
+      backgroundIrradiance: Math.round(background * 10000) / 10000,
+      roles,
+      /** Filled in by `updateLocalLightPool` from the fixtures actually seated. */
+      solved: {},
+    };
+    this.practicalPlan = plan;
+    return plan;
+  }
+
+  /**
+   * Intensity for one seated fixture: the solved value when the plan covers
+   * its role, and the authored fallback when it does not.
+   * @param {object} candidate
+   * @returns {number}
+   */
+  practicalIntensityFor(candidate) {
+    if (!this.nightLightOptions.practicalSolve) return Math.max(0, candidate?.intensity ?? 0);
+    const plan = this.practicalPlan;
+    const role = candidate?.role;
+    const spec = plan && role ? plan.roles[role] : null;
+    if (!spec) return Math.max(0, candidate?.intensity ?? 0);
+    if (!(spec.peakDisplay > 0)) return 0;
+    const solved = practicalPointLightIntensity({
+      peakDisplay: spec.peakDisplay,
+      exposure: plan.exposure,
+      backgroundIrradiance: plan.backgroundIrradiance,
+      albedo: plan.albedo,
+      distance: candidate.referenceDistance ?? 4,
+      decay: candidate.decay ?? 2,
+      cutoffDistance: candidate.distance ?? 0,
+    });
+    // Recorded once per role so the capture report carries the solve, not just
+    // the outcome: a light at the right intensity and a light at the wrong one
+    // are indistinguishable from `active` alone.
+    if (!plan.solved[role]) {
+      plan.solved[role] = {
+        intensity: solved.intensity,
+        peakDisplayRequested: spec.peakDisplay,
+        peakDisplayAchieved: solved.achievedPeakDisplay,
+        backgroundDisplay: solved.backgroundDisplay,
+        poolDisplay: solved.achievedDisplay,
+        referenceDistance: solved.distance,
+        decay: solved.decay,
+        clamped: solved.clamped,
+      };
+    }
+    return solved.intensity;
   }
 
   updateLocalLightPool(delta, force = false) {
@@ -4865,7 +6085,15 @@ export class CityRenderer {
       for (const light of this.localLightPool) {
         light.intensity = 0;
         light.visible = true;
+        if (light.castShadow) light.shadow.intensity = 0;
       }
+      if (this.localLightDiagnostics) this.localLightDiagnostics.active = 0;
+      // Daylight: hand the painted pools back their full strength. They are
+      // already at zero opacity in daylight, so this is bookkeeping, not a
+      // draw - it just means a dusk-to-dawn scrub cannot leave a stale hole.
+      // Deliberately does NOT attempt to bind: this branch runs every frame,
+      // and binding walks the scene graph looking for the decal meshes.
+      if (this.localDecalFade) this.updateLocalDecalFade(null);
       return;
     }
     this.localLightUpdateClock += delta;
@@ -4879,20 +6107,220 @@ export class CityRenderer {
       }))
       .sort((a, b) => a.distanceSq - b.distanceSq)
       .slice(0, this.localLightPool.length);
+    let active = 0;
     for (let i = 0; i < this.localLightPool.length; i += 1) {
       const light = this.localLightPool[i];
       const candidate = nearest[i]?.candidate;
       if (!candidate) {
         light.intensity = 0;
         light.visible = true;
+        if (light.castShadow) light.shadow.intensity = 0;
         continue;
       }
+      const moved = light.intensity === 0
+        || light.position.x !== candidate.x
+        || light.position.y !== candidate.y
+        || light.position.z !== candidate.z;
       light.position.set(candidate.x, candidate.y, candidate.z);
       light.color.set(candidate.color);
       light.distance = candidate.distance;
       light.decay = candidate.decay;
-      light.intensity = candidate.intensity;
+      light.intensity = this.practicalIntensityFor(candidate);
       light.visible = true;
+      active += 1;
+      if (light.castShadow) {
+        light.shadow.intensity = 1;
+        // `shadow.camera.far` is deliberately not written here; three binds it
+        // to `light.distance` itself (see the note on the constants above).
+        if (moved) {
+          light.shadow.needsUpdate = true;
+          if (this.localLightDiagnostics) this.localLightDiagnostics.shadowRefreshes += 1;
+        }
+      }
+    }
+    if (this.localLightDiagnostics) {
+      this.localLightDiagnostics.active = active;
+      // The solve, not just the count. A pool of 24 lights at the wrong
+      // intensity and a pool at the right one report the same `active`.
+      this.localLightDiagnostics.plan = this.practicalPlan;
+    }
+    this.updateLocalDecalFade(this.localLightPool);
+  }
+
+  /**
+   * Re-bake the practical shadow cubes on the next frame.
+   *
+   * `shadow.autoUpdate` is off, so a cube is otherwise re-rendered only when
+   * its light is re-seated. That is exactly right for a pinned capture pose and
+   * for the static street furniture these shadows exist for (posts, bollards,
+   * kerbside clutter), and it is what keeps six depth renders per light off the
+   * per-frame bill. It does mean a DYNAMIC occluder - a pedestrian walking
+   * through the pool - is frozen at the pose it had when the light was seated.
+   * Call this to take a new bake; it costs `cubeFacesPerRefresh` depth renders
+   * on the next frame and nothing afterwards.
+   */
+  refreshLocalLightShadows() {
+    let refreshed = 0;
+    for (const light of this.localLightPool) {
+      if (!light.castShadow) continue;
+      light.shadow.needsUpdate = true;
+      refreshed += 1;
+    }
+    if (this.localLightDiagnostics) this.localLightDiagnostics.shadowRefreshes += refreshed;
+    return refreshed;
+  }
+
+  /**
+   * Bind the painted-pool decal meshes so their strength can be modulated.
+   *
+   * The pools are built by the sky-atmosphere pass into ONE merged geometry per
+   * kind, with a single `material.opacity` the pass rewrites every frame from
+   * the practical profile. There is therefore no per-fixture handle to fade,
+   * and dimming the shared opacity would dim the whole city to fix an overlap
+   * that only ever happens within ~20 m of the camera.
+   *
+   * A vertex-colour channel is the per-fixture handle the merged mesh does not
+   * otherwise have. It multiplies the material colour, which is what an
+   * additive decal contributes, so writing 0 into it removes that patch of
+   * paint and leaves the rest of the street exactly as the pass authored it.
+   * The pass's own per-frame writes to `material.color` and `material.opacity`
+   * are untouched and keep working.
+   *
+   * Returns null until the presentation passes have built (this can be called
+   * from `setTimeOfDay` before the world exists), and re-tries on every tick
+   * until they have.
+   */
+  ensureLocalDecalFade() {
+    if (this.localDecalFade) return this.localDecalFade;
+    if (!this.nightLightOptions.decalFade) return null;
+    if (!this.root) return null;
+    const bound = [];
+    for (const name of NIGHT_DECAL_MESHES) {
+      const mesh = this.root.getObjectByName(name);
+      if (!mesh || !mesh.isMesh || !mesh.geometry) continue;
+      const position = mesh.geometry.getAttribute('position');
+      if (!position || position.count === 0) continue;
+      let color = mesh.geometry.getAttribute('color');
+      if (!color || color.count !== position.count) {
+        const array = new Float32Array(position.count * 3).fill(1);
+        color = new THREE.BufferAttribute(array, 3);
+        color.setUsage(THREE.DynamicDrawUsage);
+        mesh.geometry.setAttribute('color', color);
+      }
+      if (mesh.material && mesh.material.vertexColors !== true) {
+        mesh.material.vertexColors = true;
+        mesh.material.needsUpdate = true;
+      }
+      bound.push({
+        name,
+        mesh,
+        position,
+        color,
+        // World XZ per vertex, hoisted once. These meshes are static: the pass
+        // rebuilds them on a world rebuild, never between frames.
+        x: Float32Array.from({ length: position.count }, (_, i) => position.getX(i)),
+        z: Float32Array.from({ length: position.count }, (_, i) => position.getZ(i)),
+        clean: true,
+      });
+    }
+    if (!bound.length) {
+      const pending = this.localLightDiagnostics?.decalFade;
+      if (pending) pending.reason = 'no-decal-meshes-yet';
+      return null;
+    }
+    this.localDecalFade = {
+      meshes: bound,
+      vertices: bound.reduce((sum, entry) => sum + entry.position.count, 0),
+    };
+    const diagnostics = this.localLightDiagnostics?.decalFade;
+    if (diagnostics) {
+      diagnostics.state = 'bound';
+      diagnostics.meshes = bound.length;
+      diagnostics.vertices = this.localDecalFade.vertices;
+    }
+    return this.localDecalFade;
+  }
+
+  /**
+   * Cross-fade the painted pools out where a real light has taken over.
+   *
+   * `lights` null (or daylight) restores every decal to full strength.
+   */
+  updateLocalDecalFade(lights) {
+    const fade = this.ensureLocalDecalFade();
+    if (!fade) return;
+    const active = (lights || []).filter((light) => light.intensity > 0 && light.distance > 0);
+    let faded = 0;
+    if (!active.length) {
+      for (const entry of fade.meshes) {
+        if (entry.clean) continue;
+        entry.color.array.fill(1);
+        entry.color.needsUpdate = true;
+        entry.clean = true;
+      }
+      const diagnostics = this.localLightDiagnostics?.decalFade;
+      if (diagnostics) diagnostics.faded = 0;
+      return;
+    }
+    // One AABB over every active light's reach. Almost every vertex in a
+    // city-wide decal mesh fails this in six compares and is never distanced.
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    const reach = active.map((light) => {
+      const outer = light.distance * NIGHT_DECAL_FADE_OUTER;
+      const inner = light.distance * NIGHT_DECAL_FADE_INNER;
+      minX = Math.min(minX, light.position.x - outer);
+      maxX = Math.max(maxX, light.position.x + outer);
+      minZ = Math.min(minZ, light.position.z - outer);
+      maxZ = Math.max(maxZ, light.position.z + outer);
+      return { x: light.position.x, z: light.position.z, inner, outer, span: outer - inner };
+    });
+    for (const entry of fade.meshes) {
+      const { x, z, color } = entry;
+      const array = color.array;
+      let changed = false;
+      for (let i = 0; i < x.length; i += 1) {
+        const vx = x[i];
+        const vz = z[i];
+        let value = 1;
+        if (vx >= minX && vx <= maxX && vz >= minZ && vz <= maxZ) {
+          let coverage = 0;
+          for (let l = 0; l < reach.length; l += 1) {
+            const light = reach[l];
+            const dx = vx - light.x;
+            const dz = vz - light.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            if (distance >= light.outer) continue;
+            const t = distance <= light.inner
+              ? 0
+              : (distance - light.inner) / Math.max(1e-6, light.span);
+            // smoothstep in, so the handover has no visible ring.
+            const covered = 1 - t * t * (3 - 2 * t);
+            if (covered > coverage) coverage = covered;
+            if (coverage >= 1) break;
+          }
+          value = 1 - coverage;
+        }
+        const at = i * 3;
+        if (array[at] !== value) {
+          array[at] = value;
+          array[at + 1] = value;
+          array[at + 2] = value;
+          changed = true;
+        }
+        if (value < 0.999) faded += 1;
+      }
+      if (changed) {
+        color.needsUpdate = true;
+        entry.clean = false;
+      }
+    }
+    const diagnostics = this.localLightDiagnostics?.decalFade;
+    if (diagnostics) {
+      diagnostics.state = 'active';
+      diagnostics.faded = faded;
     }
   }
 
@@ -7384,6 +8812,23 @@ export class CityRenderer {
       group.add(awning);
       lastAwning = awning;
       count += 1;
+      // A lit shopfront is the brightest thing on a night street and it
+      // currently illuminates nothing: the glazing is emissive only, and the
+      // camera-local pool's only candidates are street lamps. Measured on the
+      // night card, a figure 4 m from glazing reading luma 119 sits at luma
+      // 41.5 - darker than the pavement under it.
+      this.localLightCandidates.push({
+        x: awning.position.x,
+        y: baseY - 0.9,
+        z: awning.position.z,
+        color: 0xffe2b0,
+        intensity: 1.6,
+        distance: 16,
+        decay: 1.8,
+        role: 'shopfront',
+        /** Head height over the footway it spills onto. */
+        referenceDistance: 3.2,
+      });
       if (neonSigns.length < 400) {
         const neonColors = ['#ff5fa2', '#35d7d7', '#ffc43d', '#8dff5f', '#c08fff', '#ff7a45'];
         const signLength = Math.min(9, Math.max(3, face === 'x' ? maxZ - minZ : maxX - minX) * 0.56);
@@ -7483,6 +8928,9 @@ export class CityRenderer {
           intensity: 2.8,
           distance: 20,
           decay: 1.7,
+          role: 'sign',
+          /** Sign face to the wall and footway it actually paints. */
+          referenceDistance: 2.5,
         });
       }
     }
@@ -8069,6 +9517,32 @@ export class CityRenderer {
       // fades to 1 through civil twilight.
       const scales = environment.lightRig.scales;
       const balance = keyFillBalance(environment.model);
+      // Run the curve the module SOLVED AGAINST, not the clock ramp above.
+      //
+      // `lightRig.scales` and `keyFillBalance().apply` are multipliers on a
+      // baseline the module reconstructs as `baselineFillCurve(daylight)` and
+      // `BASELINE_LIGHT_RIG.sun`. The ramp above is a different function - it
+      // interpolates on the clock over four hours, where `daylight` saturates
+      // six degrees either side of the horizon - so the two agreed only where
+      // both happen to be saturated. Measured on the canonical hours, they
+      // agree exactly at 10, 11, 12, 13, 15 and 21.5 and diverge hard at the
+      // 18.5 golden-hour card, where the ramp delivers 0.611x of the fill and
+      // 0.477x of the key the solver floored. That is why that card came back
+      // crushed instead of warm: its shadow side lands at 90.6% of
+      // `SHADOW_DISPLAY_FLOOR`, a floor the module publishes as a hard
+      // minimum, and its key is half of the one every `delivered` prediction
+      // in the manifest is quoted for.
+      //
+      // Seating the baseline here rather than rewriting the ramp keeps the
+      // ramp as the no-environment fallback (`envRig` is null before
+      // `initialize()` finishes, and on any backend where the PMREM fails),
+      // and makes the module's reconstruction exact by construction instead of
+      // by coincidence.
+      const baseCurve = baselineFillCurve(environment.model.daylight);
+      this.sun.intensity = BASELINE_LIGHT_RIG.sun;
+      this.hemi.intensity = baseCurve.hemi;
+      this.ambient.intensity = baseCurve.ambient;
+      this.rim.intensity = BASELINE_LIGHT_RIG.rim;
       this.sun.intensity *= scales.sun * balance.apply.sunScale;
       this.hemi.intensity *= balance.apply.hemiScale;
       this.ambient.intensity *= balance.apply.ambientScale;
@@ -8092,7 +9566,11 @@ export class CityRenderer {
       // crossing as well as zero at it, which is what keeps the direction
       // hand-over from being visible: the key is at a few per cent of its
       // strength exactly where it rotates fastest.
-      this.sun.intensity *= (2 * environment.model.daylight - 1) ** 2;
+      // `(2 * daylight - 1) ** 2` is zero at the horizon and returns to ONE
+      // below it, so the key came back at full strength after dark - which is
+      // why the night card was lit by a sun 28 degrees underground. The
+      // envelope is monotone in altitude and exactly zero at and below it.
+      this.sun.intensity *= environment.lightRig.key.envelope;
       // The rim exists to fake the anti-sun sky bounce (which is why the module
       // cuts it hardest as the environment takes that job over). A fixed world
       // direction made it the anti-sun of nothing once the key started moving,
@@ -8119,9 +9597,19 @@ export class CityRenderer {
     // Guarded by a coarse key rather than by the night transition: `setTimeOfDay`
     // already refuses hour moves under 0.02 h, and this quantises to 40 steps of
     // each ramp, so the loop runs a few dozen times across a whole day.
-    const practicals = nightPracticalProfile({ hour, weather: this.envWeather });
+    const practicals = nightPracticalProfile(environment?.model || { hour, weather: this.envWeather });
+    // Solve the resident point-light pool against the display peaks the painted
+    // pools are quoted in. Runs on every hour move, not on the coarse key
+    // below: the solve reads `hemi`/`ambient`/exposure, all of which the block
+    // above has just rewritten, and a fixture solved against last hour's
+    // background is a fixture at the wrong intensity.
+    this.planPracticalLights(environment?.model || null, practicals);
+    // Rain is a function of the same `wetness` term the surface grade uses, so
+    // the particles and the roughness drop can never disagree about whether it
+    // is raining.
+    this.setRainFromModel(environment?.model || null);
     const practicalKey = `${Math.round(practicals.windows.occupancy * 40)}:`
-      + `${Math.round(practicals.lampsOn * 40)}:${this.envWeather}`;
+      + `${Math.round(practicals.lampsOn * 40)}:${Math.round(practicals.dusk * 40)}:${this.envWeather}`;
     if (practicalKey !== this.appliedPracticalKey) {
       this.appliedPracticalKey = practicalKey;
       // Occupancy, intensity and colour temperature per emissive group instead
@@ -8149,9 +9637,23 @@ export class CityRenderer {
       for (const bulb of this.lampBulbs) {
         bulb.material.emissiveIntensity = 0.12 + 1.08 * practicals.lampsOn;
       }
-      // The three real point lights follow the street-lighting ramp too, so a
-      // 19:00 card has them on while `night` is still false.
-      this.localLightsNight = practicals.lampsOn > 0.15;
+      // The resident point-light pool follows the street-lighting ramp too, so
+      // a 19:00 card has it on while `night` is still false.
+      this.localLightsNight = practicals.lampsOn > 0.15 || practicals.dusk > 0.15;
+    }
+    // Outside the coarse key: the pool has to be re-seated whenever the solve
+    // moved, and the solve moves with exposure and fill, not only with the
+    // window-occupancy bucket. Gated on the solve's own signature so a day
+    // scrub does not re-sort the candidate list on every 0.02 h step - the
+    // unforced per-frame path is throttled to 0.25 s and picks up any residual
+    // drift on its own.
+    const plan = this.practicalPlan;
+    const planSignature = plan
+      ? `${Math.round(plan.exposure * 100)}:${Math.round(plan.backgroundIrradiance * 200)}:`
+        + Object.values(plan.roles).map((role) => Math.round(role.peakDisplay)).join(',')
+      : 'none';
+    if (planSignature !== this.appliedPracticalPlanSignature) {
+      this.appliedPracticalPlanSignature = planSignature;
       this.updateLocalLightPool(0, true);
     }
     if (this.water?.material) {
@@ -8232,6 +9734,59 @@ export class CityRenderer {
       return;
     }
     this.sunKeyDirection.set(x, y, z).normalize();
+    // Where the SUN is, as distinct from where the key is pointed. At night the
+    // key is reflected and lifted, and the fit must not publish that as a solar
+    // altitude nor cast a shadow map from it.
+    this.solarAltitudeDeg = Number.isFinite(sun?.altitudeDeg)
+      ? sun.altitudeDeg
+      : null;
+    // Publish the sun and the key SEPARATELY, in a form that cannot be
+    // misread.
+    //
+    // The capture harness records `sun.position`, which is a WORLD POSITION:
+    // `updateSunShadow` seats the light at the shadow fit's centre plus the key
+    // direction times the fit distance, so it is dominated by where the camera
+    // is standing, not by where the sun is. Round 4's report showed
+    // [1761.6, 327.9, 1006.4] at hour 21.5 and [1762.4, 314.2, 1135.3] at hour
+    // 11; two reviewers read those as the same sun direction and concluded the
+    // sun did not track the clock. The directions differ by 3.2 deg of
+    // azimuth only because both are the same street corner. The altitudes for
+    // those cards were -28.12 deg and +43.33 deg.
+    const key = this.sunKeyDirection;
+    const keyAltitudeDeg = Math.asin(clamp(key.y, -1, 1)) * (180 / Math.PI);
+    let keyAzimuthDeg = Math.atan2(key.x, -key.z) * (180 / Math.PI);
+    if (keyAzimuthDeg < 0) keyAzimuthDeg += 360;
+    this.solarDiagnostics = {
+      hour: this.timeOfDay,
+      weather: this.envWeather,
+      /** The real solar position from the site's solar model. */
+      sun: {
+        altitudeDeg: Number.isFinite(sun?.altitudeDeg) ? Math.round(sun.altitudeDeg * 100) / 100 : null,
+        azimuthDeg: Number.isFinite(sun?.azimuthDeg) ? Math.round(sun.azimuthDeg * 100) / 100 : null,
+        aboveHorizon: Number.isFinite(sun?.altitudeDeg) ? sun.altitudeDeg > 0 : null,
+        direction: [
+          Math.round(solar.x * 10000) / 10000,
+          Math.round(solar.y * 10000) / 10000,
+          Math.round(solar.z * 10000) / 10000,
+        ],
+      },
+      /** Where the DirectionalLight is actually pointed. Below the horizon this
+       *  is the reflected, lifted moon stand-in, not the sun. */
+      key: {
+        altitudeDeg: Math.round(keyAltitudeDeg * 100) / 100,
+        azimuthDeg: Math.round(keyAzimuthDeg * 100) / 100,
+        direction: [
+          Math.round(key.x * 10000) / 10000,
+          Math.round(key.y * 10000) / 10000,
+          Math.round(key.z * 10000) / 10000,
+        ],
+        daylightWeight: Number.isFinite(daylight) ? Math.round(clamp(daylight, 0, 1) * 10000) / 10000 : null,
+        isSun: Number.isFinite(daylight) ? clamp(daylight, 0, 1) >= 0.999 : null,
+      },
+      note: 'shadows.sunPosition in the capture report is a WORLD POSITION '
+        + '(shadow-fit centre + key * fit distance), not a direction. Read '
+        + 'solar.sun.altitudeDeg for the sun and solar.key.altitudeDeg for the light.',
+    };
   }
 
   /**
@@ -8247,6 +9802,489 @@ export class CityRenderer {
     const z = horizontal > 1e-6 ? (-key.z / horizontal) * cosAltitude : -cosAltitude;
     this.rim.position.set(x * 420, Math.sin(altitude) * 420, z * 420);
   }
+
+  /**
+   * Attach (or detach) the cascaded shadow node on the sun.
+   *
+   * `CSMShadowNode` is a `ShadowBaseNode`. Three's `AnalyticLightNode` checks
+   * `light.shadow.shadowNode` and, when it is set, calls it instead of the
+   * shadow term it would otherwise build. So the per-fragment cascade choice
+   * is made inside three's own node graph: this project constructs no
+   * `ShaderMaterial`, assigns no `onBeforeCompile`, and authors no shader.
+   *
+   * Two details matter and are easy to get wrong:
+   *
+   *  - the property is tested with `!== undefined`, so turning cascades OFF
+   *    means `delete`, not `= null`; assigning null would hand three a null
+   *    node to wrap;
+   *  - nothing here allocates. `_init` runs lazily, inside the first material
+   *    build that receives a shadow, and only then do the cascade lights, the
+   *    cloned shadows and the render targets exist. Everything that has to be
+   *    written onto those lives in `syncShadowCascade`, which runs per refit
+   *    and no-ops until they appear.
+   *
+   * @returns {?object} the node, or null when the rig runs un-cascaded.
+   */
+  installShadowCascade() {
+    const diagnostics = this.shadowDiagnostics.cascade;
+    if (this.shadowCascade) {
+      try { this.shadowCascade.dispose(); } catch { /* the node owns nothing yet */ }
+      this.shadowCascade = null;
+    }
+    // `!== undefined` is three's test, so this must not become null.
+    delete this.sun.shadow.shadowNode;
+    this.shadowCascadeLens = null;
+    this.shadowCascadeContexts = null;
+    const { cascades, mapSize, maxFar } = this.shadowRig;
+    this.sun.castShadow = cascades > 0;
+    diagnostics.requested = cascades;
+    diagnostics.mapSize = mapSize;
+    diagnostics.maxFar = maxFar;
+    if (cascades < 2) {
+      diagnostics.enabled = false;
+      diagnostics.installed = false;
+      diagnostics.active = cascades;
+      diagnostics.shadowPassesPerFrame = cascades;
+      diagnostics.texelBytes = cascades * mapSize * mapSize * 4;
+      diagnostics.reason = cascades === 0
+        ? 'shadows disabled by ?cascades=0'
+        : 'single un-cascaded box (?cascades=1): the round-4 rig, kept switchable so '
+          + 'the cost of cascading can be attributed against it';
+      diagnostics.cascades = [];
+      return null;
+    }
+    // A caster's top sits at most `height * sin(altitude)` deeper in light
+    // space than its base, so a margin at or above the tallest caster is what
+    // keeps a tower from being clipped out of the near cascade at low sun.
+    const lightMargin = this.maxCasterHeight + SUN_SHADOW_LIGHT_MARGIN_PAD;
+    let node = null;
+    try {
+      node = new CSMShadowNode(this.sun, {
+        cascades,
+        maxFar,
+        mode: 'practical',
+        lightMargin,
+      });
+    } catch (error) {
+      console.error(`[${SUN_SHADOW_CASCADE_VERSION}] could not construct the cascade node; `
+        + 'the rig falls back to one un-cascaded box', error);
+      diagnostics.enabled = false;
+      diagnostics.installed = false;
+      diagnostics.active = 1;
+      diagnostics.reason = `construction failed: ${String(error?.message || error).slice(0, 160)}`;
+      return null;
+    }
+    this.sun.shadow.shadowNode = node;
+    this.shadowCascade = node;
+    diagnostics.enabled = true;
+    diagnostics.installed = true;
+    diagnostics.active = cascades;
+    diagnostics.lightMargin = lightMargin;
+    diagnostics.shadowPassesPerFrame = cascades;
+    diagnostics.texelBytes = cascades * mapSize * mapSize * 4;
+    diagnostics.reason = 'attached as light.shadow.shadowNode';
+    return node;
+  }
+
+  /**
+   * Choose a shadow rig the ACTIVE BACKEND can actually deposit with.
+   *
+   * WHAT WAS MEASURED, headless, on this box (WebGPURenderer running its
+   * WebGL2 fallback under a software rasterizer):
+   *
+   *  - a plain `DirectionalLight` with `castShadow` and a fitted orthographic
+   *    box deposits a correct, hard shadow on the first drawn frame - both
+   *    on a bare `renderer.render(scene, camera)` and through the same
+   *    `pass(scene, camera)` + MRT + `renderOutput` chain this route uses;
+   *  - the same scene with `light.shadow.shadowNode = new CSMShadowNode(...)`
+   *    deposits NOTHING, with every cascade depth target allocated at its
+   *    requested size and every cascade light placed at its planned position.
+   *    Five variants - one drawn frame, three drawn frames, the placement
+   *    below applied, the per-fragment cascade choice bypassed so cascade 0 is
+   *    always sampled, and a ONE-cascade `CSMShadowNode` - are byte-identical
+   *    to each other and none of them carries a shadow anywhere.
+   *
+   * The last two matter for whoever picks this up: the split is not the
+   * problem. A single-cascade node with `breaks = [1]`, and a node whose
+   * cascade choice is removed entirely, fail exactly as hard as three
+   * cascades. What is left is the `shadow(lwLight, clonedShadow)` node the
+   * addon builds on its `LwLight` placeholder - a bare `Object3D` carrying a
+   * `shadow`, not a `DirectionalLight` - reached through
+   * `light.shadow.shadowNode`. That is where the next attempt should look.
+   *
+   * So the cascade is not mis-fitted here, it is unrendered. Until that is
+   * traced inside three's node graph, a build that cannot see a cascade must
+   * not ship one: three allocated shadow maps and three extra shadow render
+   * passes per frame, for a frame with no shadow in it, is the exact failure
+   * this round was called to end.
+   *
+   * `?cascades=N` still wins. A round that explicitly asks for the cascade
+   * gets the cascade, on any backend, and the diagnostics say so - that is how
+   * the next GPU target measures it, and how this finding gets re-checked.
+   *
+   * @returns {?{from: number, to: number}} the change, or null if none.
+   */
+  applyBackendShadowRigPolicy() {
+    const diagnostics = this.shadowDiagnostics.cascade;
+    diagnostics.backend = this.rendererBackend;
+    const fallback = this.rendererBackend === 'webgl2-fallback';
+    diagnostics.depositsOnThisBackend = fallback ? false : null;
+    if (!fallback) {
+      diagnostics.backendNote = 'backend is not the WebGL2 fallback; the cascade path is '
+        + 'kept, and this build has NOT measured whether it deposits here';
+      return null;
+    }
+    if (this.shadowRig.cascadesExplicit) {
+      diagnostics.backendNote = `?cascades=${this.shadowRig.cascades} was asked for explicitly, `
+        + 'so the rig is left alone. Measured on this backend, a cascade node deposits no '
+        + 'shadow at all: expect a flat-lit frame at cascades >= 2 here';
+      if (this.shadowRig.cascades >= 2) {
+        // The reason string is what the capture report prints. A round must
+        // not be able to read "3 cascades installed" without also reading
+        // that they deposit nothing on the backend that drew the frame.
+        diagnostics.reason = `${diagnostics.reason}; DEPOSITS NOTHING ON THIS BACKEND `
+          + '(webgl2-fallback, measured): the frame it produces is unshadowed';
+      }
+      return null;
+    }
+    if (this.shadowRig.cascades < 2) {
+      diagnostics.backendNote = 'already un-cascaded; nothing to fall back from';
+      return null;
+    }
+    const from = this.shadowRig.cascades;
+    this.shadowRig = Object.freeze({ ...this.shadowRig, cascades: 1 });
+    this.installShadowCascade();
+    diagnostics.backendNote = `fell back from ${from} cascades to one well-fitted box: a `
+      + 'cascade node deposits no shadow on this backend (measured headless, all targets '
+      + 'allocated, all cascade lights placed). Reach the cascade anyway with '
+      + `?cascades=${from}`;
+    diagnostics.reason = `${diagnostics.reason}; ${diagnostics.backendNote}`;
+    console.warn(`[${SUN_SHADOW_CASCADE_VERSION}] ${diagnostics.backendNote}`);
+    return { from, to: 1 };
+  }
+
+  /**
+   * Place the cascade lights for the frame that is ABOUT TO BE DRAWN.
+   *
+   * `CSMShadowNode.updateBefore` is what moves the per-cascade lights, and
+   * three registers it as a SEQUENTIAL node - `NodeBuilder.addSequentialNode`
+   * runs after `setup()`, so the child `shadow()` nodes the cascade builds
+   * inside its own setup are registered BEFORE it. Their `updateBefore`, which
+   * is the one that actually rasterises each cascade's depth, therefore runs
+   * first, one whole frame ahead of the placement it depends on. Measured
+   * headless: after the first drawn frame every cascade light's `matrixWorld`
+   * translation is still (0, 0, 0) while its `position` already holds the
+   * planned value; the two only agree from the third frame on.
+   *
+   * The capture harness draws exactly one frame per card, so on the capture
+   * path that lag is not a transient - it is every frame the round delivers.
+   *
+   * Running the node's own placement here, before the draw, and forcing the
+   * two placeholder objects' world matrices, is enough to make frame one carry
+   * the same placement frame three would. Three will run `updateBefore` again
+   * at the end of the frame with the same inputs, which recomputes the same
+   * numbers.
+   *
+   * This does NOT make the cascade deposit on the WebGL2 fallback - nothing in
+   * this method addresses that, and it was still empty at three frames - it
+   * removes a defect that would otherwise hide behind that one on a backend
+   * where the cascade does render.
+   *
+   * @returns {boolean} whether the cascade was placed for this frame.
+   */
+  prepareShadowCascadeFrame() {
+    const node = this.shadowCascade;
+    if (!node || node.camera === null || !node.lights.length) return false;
+    if (this.camera && node.camera !== this.camera) node.camera = this.camera;
+    if (!this.sun.parent) return false;
+    try {
+      this.camera.updateMatrixWorld();
+      this.sun.updateMatrixWorld();
+      this.sun.target.updateMatrixWorld();
+      node.updateBefore();
+      for (let i = 0; i < node.lights.length; i += 1) {
+        const light = node.lights[i];
+        light.updateMatrixWorld(true);
+        if (light.target) light.target.updateMatrixWorld(true);
+      }
+    } catch (error) {
+      if (!this.shadowCascadePlacementWarned) {
+        this.shadowCascadePlacementWarned = true;
+        console.error(`[${SUN_SHADOW_CASCADE_VERSION}] could not place the cascade lights for `
+          + 'this frame; three will place them one frame late', error);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * QA handle: report the cascade rig, and say plainly why it cannot be
+   * changed after boot.
+   *
+   * The cascade count is compiled into the node graph - `_setupStandard`
+   * unrolls one `If` per cascade the first time a receiving material is built
+   * - so swapping it mid-session would leave the shaders sampling a count the
+   * diagnostics no longer claim. Reach it with `?cascades=N` instead, which is
+   * read once, before anything compiles.
+   *
+   * @param {number} count
+   * @returns {{changed: boolean, cascades: number, reason: string}}
+   */
+  setShadowCascades(count) {
+    const requested = Number(count);
+    const current = this.shadowRig.cascades;
+    if (!Number.isInteger(requested) || requested < 0 || requested > 4) {
+      return { changed: false, cascades: current, reason: `cascade count must be an integer 0..4, got ${count}` };
+    }
+    if (requested === current) {
+      return { changed: false, cascades: current, reason: 'already at this cascade count' };
+    }
+    if (this.shadowCascade && this.shadowCascade.camera !== null) {
+      return {
+        changed: false,
+        cascades: current,
+        reason: 'the cascade count is unrolled into the node graph at first material build and '
+          + 'this renderer has already compiled one; relaunch with ?cascades=' + requested,
+      };
+    }
+    this.shadowRig = Object.freeze({ ...this.shadowRig, cascades: requested });
+    this.installShadowCascade();
+    return { changed: true, cascades: requested, reason: 'installed before the first material build' };
+  }
+
+  /**
+   * Write everything onto the cascade node that three does not write itself,
+   * and record what the GPU actually gave back.
+   *
+   * `CSMShadowNode` sizes each cascade's orthographic box and moves its light,
+   * and does nothing else. In particular it never sets the cascade cameras'
+   * near/far - they are whatever `light.shadow.clone()` happened to carry at
+   * `_init` - and it never revisits bias, which it seeds as
+   * `bias * (i + 1)`. Both matter here:
+   *
+   *  - **near/far.** The cascade light is placed `lightMargin` behind its
+   *    slice, so its casters lie between roughly `lightMargin - casterHeight`
+   *    and `lightMargin + boxDepth`. A near of 0.5 and a far of
+   *    `lightMargin + 2 * halfExtent` contains that with headroom at both
+   *    ends. Left at the inherited pair, the near cascade's far plane would
+   *    sit in front of half its own casters.
+   *  - **bias.** The bias that keeps a 3.8 cm texel free of acne is not the
+   *    bias a 21.7 cm texel needs, and it is not a fixed multiple of it
+   *    either: `recommendShadowBias` prices it from the texel size AND the
+   *    orthographic depth range, and the depth range differs per cascade by
+   *    more than 2x. Each cascade gets its own pair.
+   *
+   * Also mirrors cascade 0's render target onto `sun.shadow.map`. That field
+   * is otherwise null for the whole session once a shadow node is attached -
+   * three allocates per cascade, not on the base light - and the capture
+   * harness reads exactly that field to assert the shadow map allocated at its
+   * requested size. The mirror is a real, allocated target at the same size,
+   * not a stand-in; the per-cascade truth is recorded alongside it.
+   *
+   * @returns {?object} the cascade diagnostics block, or null when un-cascaded.
+   */
+  syncShadowCascade() {
+    const node = this.shadowCascade;
+    const diagnostics = this.shadowDiagnostics.cascade;
+    if (!node) return null;
+    // `_init` runs inside the first material build. Until it has, there are no
+    // cascade lights to write onto and no render targets to measure.
+    if (node.camera === null || node.lights.length === 0) {
+      diagnostics.initialised = false;
+      return diagnostics;
+    }
+    // Three takes the camera from whichever NodeBuilder reached `_init` first.
+    // That is the app camera on every path we have, but the post chain draws
+    // full-screen quads with a camera of its own, so this is asserted rather
+    // than assumed: a cascade split computed from an orthographic quad camera
+    // would be silently meaningless.
+    if (this.camera && node.camera !== this.camera) node.camera = this.camera;
+    diagnostics.initialised = true;
+
+    const camera = this.camera;
+    const mapSize = this.shadowRig.mapSize;
+    const lens = `${camera.fov},${camera.aspect.toFixed(5)},${camera.near},${camera.far}`;
+    if (lens !== this.shadowCascadeLens) {
+      this.shadowCascadeLens = lens;
+      // The split is a function of the lens alone, so this runs on a resize or
+      // a field-of-view change and never per frame.
+      node.updateFrustums();
+      diagnostics.lens = {
+        fov: camera.fov,
+        aspect: Number(camera.aspect.toFixed(5)),
+        near: camera.near,
+        far: camera.far,
+      };
+      // The per-cascade thickness floors follow the split, so a lens change
+      // re-tiers the scene rather than leaving last frame's floors in place.
+      // Safe to repeat: the policy pass reads each mesh's recorded builder
+      // intent, not the flag it wrote last time, so re-running it can restore a
+      // caster as well as remove one.
+      if (this.root && this.city) this.applyShadowCasterPolicyPass(this.root);
+      else this.shadowCascadeContexts = this.cascadeCasterContexts();
+    }
+
+    // `lightMargin` is read fresh every frame by the node, so it can follow the
+    // city's declared tallest caster instead of the constructor's guess. A
+    // margin under the tallest caster clips towers out of the near cascade at
+    // low sun, which is the golden-hour card.
+    const lightMargin = this.maxCasterHeight + SUN_SHADOW_LIGHT_MARGIN_PAD;
+    if (node.lightMargin !== lightMargin) {
+      node.lightMargin = lightMargin;
+      diagnostics.lightMargin = lightMargin;
+    }
+    const altitude = Number.isFinite(this.shadowFit?.sunAltitudeDeg)
+      ? this.shadowFit.sunAltitudeDeg
+      : null;
+    const entries = [];
+    for (let i = 0; i < node.lights.length; i += 1) {
+      const shadow = node.lights[i].shadow;
+      const cam = shadow.camera;
+      shadow.mapSize.set(mapSize, mapSize);
+      // Cloned at `_init`, so nothing the day/night curve writes onto
+      // `sun.shadow` afterwards reaches a cascade unless it is copied here.
+      // `intensity` is the one that moves: the environment rig drops it to
+      // 0.533 on the overcast card and to 0 at night.
+      if ('intensity' in this.sun.shadow) shadow.intensity = this.sun.shadow.intensity;
+      shadow.radius = this.sun.shadow.radius;
+      shadow.blurSamples = this.sun.shadow.blurSamples;
+      const halfExtent = Math.abs(cam.right);
+      const near = 0.5;
+      const far = (node.lightMargin || 0) + halfExtent * 2 + 2;
+      if (cam.near !== near || cam.far !== far) {
+        cam.near = near;
+        cam.far = far;
+        cam.updateProjectionMatrix();
+      }
+      const texelWorldSize = halfExtent > 0 ? (halfExtent * 2) / mapSize : null;
+      if (texelWorldSize) {
+        const plan = recommendShadowBias({
+          texelWorldSize,
+          depthRange: far - near,
+          mapSize,
+          sunAltitudeDeg: altitude,
+        });
+        if (Number.isFinite(plan.normalBias)) shadow.normalBias = plan.normalBias;
+        if (Number.isFinite(plan.bias)) shadow.bias = plan.bias;
+      }
+      // Per-cascade caster set. See `SUN_SHADOW_CASCADE_LAYER`: bit 0 stays in
+      // the mask so an untagged caster is drawn everywhere rather than nowhere.
+      cam.layers.disableAll();
+      cam.layers.enable(0);
+      cam.layers.enable(SUN_SHADOW_CASCADE_LAYER + i);
+      const map = shadow.map || null;
+      entries.push({
+        index: i,
+        halfExtent: Number(halfExtent.toFixed(3)),
+        width: Number((halfExtent * 2).toFixed(3)),
+        texelWorldSize: texelWorldSize ? Number(texelWorldSize.toFixed(6)) : null,
+        texelsPerMetre: texelWorldSize ? Number((1 / texelWorldSize).toFixed(4)) : null,
+        minCasterThickness: texelWorldSize
+          ? Number((MIN_THICKNESS_TEXELS * texelWorldSize).toFixed(4))
+          : null,
+        near,
+        far,
+        depthRange: Number((far - near).toFixed(2)),
+        normalBias: shadow.normalBias,
+        bias: shadow.bias,
+        layer: SUN_SHADOW_CASCADE_LAYER + i,
+        // Assert-and-log, exactly like the harness does for the base light.
+        // A silently under-allocated depth attachment is the one failure this
+        // backend has form for, and it is invisible in the frame.
+        requestedMapSize: [mapSize, mapSize],
+        allocatedMapSize: map ? [map.width ?? null, map.height ?? null] : null,
+        allocated: Boolean(map),
+        allocationMatches: Boolean(map && map.width === mapSize && map.height === mapSize),
+      });
+    }
+    diagnostics.cascades = entries;
+    diagnostics.active = entries.length;
+    diagnostics.shadowPassesPerFrame = entries.length;
+    diagnostics.texelBytes = entries.length * mapSize * mapSize * 4;
+    // Give the harness's `sun.shadow.map` assert a real target to read.
+    const nearMap = node.lights[0]?.shadow?.map || null;
+    if (nearMap && this.sun.shadow.map !== nearMap) this.sun.shadow.map = nearMap;
+    const missing = entries.filter((e) => e.allocated && !e.allocationMatches);
+    if (missing.length && !diagnostics.allocationWarned) {
+      diagnostics.allocationWarned = true;
+      console.error(`[${SUN_SHADOW_CASCADE_VERSION}] cascade shadow map allocated at the wrong `
+        + `size on this backend: ${missing.map((e) => `#${e.index} `
+        + `${JSON.stringify(e.allocatedMapSize)} != ${JSON.stringify(e.requestedMapSize)}`).join(', ')}`);
+    }
+    if (!this.shadowCascadeLogged && entries.length && entries[0].allocated) {
+      this.shadowCascadeLogged = true;
+      console.info(
+        `[${SUN_SHADOW_CASCADE_VERSION}] ${entries.length} cascades over `
+        + `${camera.near}..${Math.min(camera.far, node.maxFar)} m at ${mapSize}x${mapSize} each `
+        + `(${entries.length} shadow passes/frame, `
+        + `${(diagnostics.texelBytes / 1048576).toFixed(1)} MB of depth): `
+        + entries.map((e) => `#${e.index} ${(e.texelWorldSize * 100).toFixed(2)} cm texels, `
+          + `caster floor ${(e.minCasterThickness * 100).toFixed(1)} cm, `
+          + `box ${e.width.toFixed(0)} m, allocated ${JSON.stringify(e.allocatedMapSize)}`).join('; '),
+      );
+    }
+    return diagnostics;
+  }
+
+  /**
+   * Per-cascade caster-policy contexts, coarsest floor last.
+   *
+   * One context per cascade, each carrying that cascade's own texel size. The
+   * thickness floor `resolveShadowCasterContext` derives from it is what makes
+   * the re-admission correct rather than merely generous: a 0.118 m transit
+   * support is 3.1 texels in the near cascade and 0.54 texels in the far one,
+   * so it must be rasterised into the first and must NOT be rasterised into
+   * the third, where it could only produce the banding the caster policy was
+   * written to stop.
+   *
+   * Falls back to the single-box fit when the cascade budget is unavailable,
+   * so the un-cascaded rig keeps exactly its round-4 behaviour.
+   *
+   * @returns {Array<{texelWorldSize: number, ringRadius: number}>}
+   */
+  cascadeCasterContexts() {
+    const diagnostics = this.shadowDiagnostics.cascade;
+    const camera = this.camera;
+    const { cascades, mapSize, maxFar } = this.shadowRig;
+    // Deliberately derived from the LENS and the rig options, not from the
+    // cascade node. The node's boxes only exist after three has compiled a
+    // receiving material, which happens long after the world is built and the
+    // caster policy has to have run. `planCascadeTexelBudget` reproduces the
+    // same fit from the same inputs, so the floors used at build time are the
+    // ones the node will actually deliver.
+    if (cascades >= 2 && camera && Number.isFinite(camera.fov) && Number.isFinite(camera.aspect)
+      && camera.aspect > 0 && camera.near > 0) {
+      try {
+        const budget = planCascadeTexelBudget({
+          cascades,
+          mapSize,
+          fovDeg: camera.fov,
+          aspect: camera.aspect,
+          cameraNear: camera.near,
+          cameraFar: camera.far,
+          maxFar,
+          minThicknessTexels: MIN_THICKNESS_TEXELS,
+        });
+        diagnostics.budget = budget;
+        return budget.cascades.map((c) => ({
+          texelWorldSize: c.texelWorldSize,
+          ringRadius: c.halfExtent,
+        }));
+      } catch (error) {
+        diagnostics.budget = null;
+        diagnostics.reason = `texel budget failed: ${String(error?.message || error).slice(0, 160)}`;
+      }
+    }
+    const texelWorldSize = Number.isFinite(this.shadowFit?.texelWorldSize)
+      ? this.shadowFit.texelWorldSize
+      : MEASURED_TEXEL_WORLD_SIZE;
+    const ringRadius = Number.isFinite(this.shadowFit?.halfExtent) && this.shadowFit.halfExtent > 0
+      ? this.shadowFit.halfExtent
+      : MEASURED_RING_RADIUS;
+    return [{ texelWorldSize, ringRadius }];
+  }
+
 
   /**
    * Fit the sun's orthographic shadow camera to the visible slice of the view
@@ -8294,6 +10332,7 @@ export class CityRenderer {
     if (!force && signature === this.shadowFitSignature) return null;
     this.shadowFitSignature = signature;
 
+    const mapSize = this.shadowRig.mapSize;
     const fit = computeSunShadowCamera({
       cameraPosition: { x: eye.x, y: eye.y, z: eye.z },
       cameraDirection: { x: forward.x, y: forward.y, z: forward.z },
@@ -8302,10 +10341,20 @@ export class CityRenderer {
       sunDirection: { x: key.x, y: key.y, z: key.z },
       shadowDistance: SUN_SHADOW_DISTANCE,
       cameraNear: camera.near,
-      mapSize: SUN_SHADOW_MAP_SIZE,
+      mapSize,
       maxCasterHeight: this.maxCasterHeight,
+      solarAltitudeDeg: Number.isFinite(this.solarAltitudeDeg) ? this.solarAltitudeDeg : null,
     });
+    // Still applied, and still the source of `castShadow`, the reported
+    // density and the caster-policy fallback, even when cascades are on: the
+    // cascade node reads `light.position`/`light.target` for its light
+    // orientation and clones this shadow's settings, so the fit is what aims
+    // the whole rig. It stops being the thing that sizes the boxes, which is
+    // why `shadowDiagnostics.cascade` reports those separately.
     applySunShadowFit(this.sun, fit);
+    // `applySunShadowFit` writes `castShadow` from the key direction, which is
+    // right for the rig but must not undo an explicit `?cascades=0`.
+    if (this.shadowRig.cascades === 0) this.sun.castShadow = false;
     // The fit's own bias pair was calibrated while 143 sub-texel meshes were
     // still in the caster set - the one acne source a normal offset cannot fix
     // at any magnitude - so it carries 1.25 texels of normalBias. With the
@@ -8318,7 +10367,7 @@ export class CityRenderer {
     const biasPlan = recommendShadowBias({
       texelWorldSize: fit.texelWorldSize,
       depthRange: fit.depthRange,
-      mapSize: SUN_SHADOW_MAP_SIZE,
+      mapSize,
       sunAltitudeDeg: fit.sunAltitudeDeg,
     });
     if (Number.isFinite(biasPlan.normalBias)) this.sun.shadow.normalBias = biasPlan.normalBias;
@@ -8347,16 +10396,22 @@ export class CityRenderer {
       warnings: biasPlan.warnings,
     };
     diagnostics.castShadow = fit.castShadow;
-    diagnostics.sunAltitudeDeg = fit.sunAltitudeDeg;
+    diagnostics.sunAltitudeDeg = fit.solarAltitudeDeg ?? fit.keyAltitudeDeg;
+    diagnostics.keyAltitudeDeg = fit.keyAltitudeDeg;
+    diagnostics.keyIsSun = fit.keyIsSun;
     diagnostics.maxCasterHeight = this.maxCasterHeight;
     diagnostics.warnings = fit.warnings;
+    // Everything the cascade node needs that three does not write itself, and
+    // the record of what it actually allocated. No-ops until the node has been
+    // initialised by the first material build.
+    this.syncShadowCascade();
     if (!this.shadowFitLogged) {
       this.shadowFitLogged = true;
       // Once, at startup. The density is invariant to the sun and to which way
       // the camera faces, so a single line describes every frame the app will
       // ever draw at this map size and shadow distance.
       console.info(
-        `[${SUN_SHADOW_PASS}] shadow map ${SUN_SHADOW_MAP_SIZE}x${SUN_SHADOW_MAP_SIZE} `
+        `[${SUN_SHADOW_PASS}] shadow map ${mapSize}x${mapSize} `
         + `over ${SUN_SHADOW_DISTANCE} m of view depth: `
         + `${fit.texelsPerMetre.toFixed(3)} texels/m `
         + `(${(fit.texelWorldSize * 100).toFixed(1)} cm texels, ${fit.width.toFixed(1)} m box), `
@@ -8391,11 +10446,23 @@ export class CityRenderer {
   ensureCrowdPresentation() {
     if (this.crowd) return this.crowd;
     try {
-      // The plane the crowd stands on. `terrain.heightAt` is BARE GROUND; the
-      // pavement is `streetDesign.roadLift + 45 mm` above it - see
-      // `streetSurfaceLift` - which is where the kerb top, the street lamps, the
-      // sidewalk props and the seated hero actors already are. Sampling bare
-      // terrain sank the entire crowd 42 cm into the pavement.
+      // The SURFACE the crowd stands on - not a plane.
+      //
+      // `terrain.heightAt` is BARE GROUND; the pavement is above it. This used
+      // to add the single constant `streetSurfaceLift().footway`, which is the
+      // kerb-top plane the street lamps and the sidewalk props are placed on.
+      // But the footway the street pass DRAWS falls 8 mm across the kerb top and
+      // then cross-falls 2% away from the road, so on a walking line 1.2 m back
+      // from the kerb the constant is 18-46 mm BELOW the concrete - which sank
+      // every sole into the pavement and put the contact-shadow blob underneath
+      // it, where it darkens nothing.
+      //
+      // `TrafficSim.pedestrianGroundY` samples the street module's own
+      // cross-section at the point asked for, and is the single source of
+      // footway height for the simulated crowd. Sampling it here rather than
+      // duplicating the arithmetic is what keeps the drawn figure and the
+      // simulated walker on ONE surface; the constant survives only as the
+      // off-street fallback, and only until a sampler is available.
       const crowdFootwayLift = this.streetSurfaceLift(this.city || {}).footway;
       this.crowd = createCrowdPresentation({
         // Under `city-root`, not the scene. Interior mode hides every visible
@@ -8405,14 +10472,36 @@ export class CityRenderer {
         // `verify:citygen-actors` counts the meshes named `pedestrian-*` in
         // there and expects exactly the simulation's own eleven.
         parent: this.root || this.scene,
-        // The simulation's own footway datum, not a second one: TrafficSim's
-        // `pedestrianGroundY` puts walkers on the same plane.
-        sampleGround: (x, z) => (this.terrain?.heightAt
-          ? this.terrain.heightAt(x, z) + crowdFootwayLift
-          : crowdFootwayLift),
+        // The simulation's own footway sampler, not a second one: whatever
+        // `TrafficSim.pedestrianGroundY` says is under a walker is what the
+        // drawn figure stands on, to the last bit.
+        sampleGround: (x, z) => {
+          const sampler = this.crowdGroundSampler;
+          if (sampler) {
+            const y = sampler(x, z);
+            if (Number.isFinite(y)) return y;
+          }
+          return this.terrain?.heightAt
+            ? this.terrain.heightAt(x, z) + crowdFootwayLift
+            : crowdFootwayLift;
+        },
         readAgent: (source, index, out) => this.readPedestrianAgent(source, index, out),
       });
       this.crowdDiagnostics.pass = this.crowd.version;
+      // The crowd is built lazily, AFTER `applyShadowCasterPolicyPass` has
+      // tiered the world. Its meshes would otherwise carry bit 0 alone, which
+      // the cascade cameras do accept - so the crowd would cast into every
+      // cascade, including the ones whose texel cannot resolve a 0.35 m torso.
+      // Tiering it here puts the pedestrians in the cascades that can draw
+      // them and out of the ones that would only band.
+      if (this.crowd.object3d) {
+        try {
+          this.tagShadowCascadeLayers(this.crowd.object3d);
+        } catch (error) {
+          console.warn(`[${SHADOW_CASTER_VERSION}] could not tier the crowd for the shadow `
+            + 'cascades; it keeps the fail-safe layer and casts into every cascade', error);
+        }
+      }
       // The crowd is built lazily, after `applyEnvironmentGrading` may already
       // have cached its material groups from a traverse of `city-root`. Its
       // materials declare `userData.envClass`, so drop the cache and let the
@@ -8524,6 +10613,12 @@ export class CityRenderer {
       return null;
     }
     if (this.crowdPresentationFailed) return null;
+    // Late-bound so the crowd never holds a stale TrafficSim across a map
+    // switch. Read-only: presentation asks the simulation where the ground is
+    // and writes nothing back.
+    this.crowdGroundSampler = typeof traffic?.pedestrianGroundY === 'function'
+      ? (x, z) => traffic.pedestrianGroundY(x, z)
+      : null;
     const crowd = this.ensureCrowdPresentation();
     if (!crowd) return null;
     this.crowdTrackStep = Math.max(0, delta);
@@ -8614,6 +10709,7 @@ export class CityRenderer {
     this.signalPhaseClock += delta;
     this.controls.update();
     if (time != null) this.setTimeOfDay(time);
+    this.updateRain(delta);
     this.updateLocalLightPool(delta);
     this.updateWorldPartition();
     this.updatePortalPartition();
@@ -8663,7 +10759,14 @@ export class CityRenderer {
     // render one frame behind the fit. The signature check makes this free when
     // nothing has moved.
     this.updateSunShadow();
-    this.renderer.render(this.scene, this.camera);
+    // The cascade lights are placed by a node that three runs AFTER the nodes
+    // that rasterise the cascades. See `prepareShadowCascadeFrame`.
+    this.prepareShadowCascadeFrame();
+    // One draw site on the canonical path. The chain owns tone mapping, the
+    // colour-space encode and the grade when it is on; the bare render is the
+    // documented fallback and keeps the renderer's own output transform.
+    if (this.postChain && this.postChain.enabled) this.postChain.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   setWalkMode(enabled) {
